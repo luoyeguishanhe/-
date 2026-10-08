@@ -33,7 +33,7 @@ class MainWindow(QMainWindow):
 
         title = QLabel("系统声音录制")
         title.setStyleSheet("font-size: 24px; font-weight: 600;")
-        description = QLabel("选择正在播放视频声音的设备，录制结束后保存为 WAV 文件。")
+        description = QLabel("选择正在播放视频声音的设备，录制结束后保存为 16 kHz 单声道 WAV。")
         description.setWordWrap(True)
 
         self.devices = QComboBox()

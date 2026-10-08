@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from array import array
 from contextlib import suppress
 from dataclasses import dataclass
 from math import log10
@@ -13,7 +12,10 @@ import tempfile
 from threading import Event, Thread
 import wave
 
+import numpy as np
 import pyaudiowpatch as pyaudio
+
+from .audio_processing import AudioNormalizer, TARGET_SAMPLE_RATE, float32_to_pcm16
 
 
 @dataclass(frozen=True)
@@ -49,7 +51,7 @@ def list_output_devices() -> list[OutputDevice]:
 
 
 class SystemAudioRecorder:
-    """Record one selected output device to a PCM WAV file in a worker thread."""
+    """Record one output device as 16 kHz mono PCM WAV in a worker thread."""
 
     def __init__(self) -> None:
         self.events: Queue[tuple[str, object]] = Queue()
@@ -102,6 +104,7 @@ class SystemAudioRecorder:
 
             rate = int(info["defaultSampleRate"])
             channels = int(info["maxInputChannels"])
+            normalizer = AudioNormalizer(rate, channels)
             chunk_frames = 1024
             stream = audio.open(
                 format=pyaudio.paInt16,
@@ -116,23 +119,16 @@ class SystemAudioRecorder:
             ) as temporary:
                 temporary_path = Path(temporary.name)
 
-            self.sample_rate = rate
-            self.events.put(("started", info["name"]))
+            self.sample_rate = TARGET_SAMPLE_RATE
+            self.events.put(("started", f"{info['name']}（{rate} Hz、{channels} 声道 → 16 kHz 单声道）"))
             with wave.open(str(temporary_path), "wb") as wav:
-                wav.setnchannels(channels)
-                wav.setsampwidth(audio.get_sample_size(pyaudio.paInt16))
-                wav.setframerate(rate)
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(TARGET_SAMPLE_RATE)
                 while not self._stop.is_set():
                     data = stream.read(chunk_frames, exception_on_overflow=False)
-                    wav.writeframesraw(data)
-                    samples = array("h")
-                    samples.frombytes(data)
-                    peak = max((abs(x) for x in samples), default=0)
-                    self.level = (
-                        min(100, max(1, round((20 * log10(peak / 32768) + 60) * 100 / 60)))
-                        if peak else 0
-                    )
-                    self.frames_written += len(data) // (2 * channels)
+                    self._write_chunk(wav, normalizer.process(data))
+                self._write_chunk(wav, normalizer.finish())
 
             if self.frames_written == 0:
                 raise RuntimeError("没有采集到音频数据，请确认设备正在播放声音")
@@ -154,3 +150,14 @@ class SystemAudioRecorder:
             if temporary_path is not None:
                 with suppress(OSError):
                     temporary_path.unlink(missing_ok=True)
+
+    def _write_chunk(self, wav: wave.Wave_write, samples: np.ndarray) -> None:
+        if samples.size == 0:
+            return
+        wav.writeframesraw(float32_to_pcm16(samples))
+        self.frames_written += samples.size
+        peak = float(np.max(np.abs(samples)))
+        self.level = (
+            min(100, max(1, round((20 * log10(peak) + 60) * 100 / 60)))
+            if peak else 0
+        )

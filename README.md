@@ -12,7 +12,7 @@ python -m venv .venv
 .venv\Scripts\python -m subtitle_app
 ```
 
-在窗口中选择视频实际使用的输出设备，点击“开始录音”并选择保存位置。播放视频时观察音量条，结束后点击“停止并保存”。录音使用 Windows WASAPI loopback，仅采集选中输出设备正在播放的声音，不采集麦克风。保存的 WAV 使用设备原始采样率和声道数。
+在窗口中选择视频实际使用的输出设备，点击“开始录音”并选择保存位置。播放视频时观察音量条，结束后点击“停止并保存”。录音使用 Windows WASAPI loopback，仅采集选中输出设备正在播放的声音，不采集麦克风。程序会在录音时将设备原始音频混合为单声道，并持续重采样；保存的 WAV 是适合后续语音识别的 **16 kHz、单声道、16 位 PCM**。
 
 后续将按功能逐步复用 [LiveTranslate](https://github.com/TheDeathDragon/LiveTranslate) 的实现，并保留所复用代码的 MIT 版权及许可声明。目前的界面骨架未复制其源代码。
 

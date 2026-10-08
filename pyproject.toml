@@ -8,7 +8,12 @@ version = "0.1.0"
 description = "实时中文字幕桌面应用（开发中）"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["PyQt6>=6.5", "PyAudioWPatch>=0.2.12"]
+dependencies = [
+    "PyQt6>=6.5",
+    "PyAudioWPatch>=0.2.12",
+    "numpy>=1.24,<2.3",
+    "soxr>=0.5",
+]
 
 [project.scripts]
 subtitle-app = "subtitle_app.main:main"
