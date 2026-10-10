@@ -7,9 +7,10 @@ from dataclasses import dataclass
 from math import log10
 import os
 from pathlib import Path
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 import tempfile
 from threading import Event, Thread
+from typing import Callable
 import wave
 
 import numpy as np
@@ -65,7 +66,12 @@ class SystemAudioRecorder:
     def is_active(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
-    def start(self, device_index: int, output_path: Path) -> None:
+    def start(
+        self,
+        device_index: int,
+        output_path: Path,
+        on_audio: Callable[[np.ndarray, int], None] | None = None,
+    ) -> None:
         if self.is_active:
             raise RuntimeError("录音已经在进行中")
         self._stop.clear()
@@ -74,7 +80,7 @@ class SystemAudioRecorder:
         self.sample_rate = 0
         self._thread = Thread(
             target=self._record,
-            args=(device_index, output_path),
+            args=(device_index, output_path, on_audio),
             name="SystemAudioRecorder",
         )
         self._thread.start()
@@ -92,7 +98,12 @@ class SystemAudioRecorder:
         except Empty:
             return None
 
-    def _record(self, device_index: int, output_path: Path) -> None:
+    def _record(
+        self,
+        device_index: int,
+        output_path: Path,
+        on_audio: Callable[[np.ndarray, int], None] | None,
+    ) -> None:
         audio = None
         stream = None
         temporary_path = None
@@ -106,6 +117,21 @@ class SystemAudioRecorder:
             channels = int(info["maxInputChannels"])
             normalizer = AudioNormalizer(rate, channels)
             chunk_frames = 1024
+            captured: Queue[bytes] = Queue(maxsize=256)
+            overflow_reported = False
+
+            def receive_audio(data: bytes, _frames: int, _time: dict, _status: int):
+                nonlocal overflow_reported
+                if data:
+                    try:
+                        captured.put_nowait(data)
+                        overflow_reported = False
+                    except Full:
+                        if not overflow_reported:
+                            self.events.put(("warning", "录音处理跟不上播放速度，部分声音已跳过"))
+                            overflow_reported = True
+                return (None, pyaudio.paContinue)
+
             stream = audio.open(
                 format=pyaudio.paInt16,
                 channels=channels,
@@ -113,6 +139,7 @@ class SystemAudioRecorder:
                 input=True,
                 input_device_index=device_index,
                 frames_per_buffer=chunk_frames,
+                stream_callback=receive_audio,
             )
             with tempfile.NamedTemporaryFile(
                 prefix=".system-audio-", suffix=".wav", dir=output_path.parent, delete=False
@@ -126,9 +153,15 @@ class SystemAudioRecorder:
                 wav.setsampwidth(2)
                 wav.setframerate(TARGET_SAMPLE_RATE)
                 while not self._stop.is_set():
-                    data = stream.read(chunk_frames, exception_on_overflow=False)
-                    self._write_chunk(wav, normalizer.process(data))
-                self._write_chunk(wav, normalizer.finish())
+                    try:
+                        data = captured.get(timeout=0.1)
+                    except Empty:
+                        continue
+                    self._write_chunk(wav, normalizer.process(data), on_audio)
+                stream.stop_stream()
+                while not captured.empty():
+                    self._write_chunk(wav, normalizer.process(captured.get_nowait()), on_audio)
+                self._write_chunk(wav, normalizer.finish(), on_audio)
 
             if self.frames_written == 0:
                 raise RuntimeError("没有采集到音频数据，请确认设备正在播放声音")
@@ -151,11 +184,19 @@ class SystemAudioRecorder:
                 with suppress(OSError):
                     temporary_path.unlink(missing_ok=True)
 
-    def _write_chunk(self, wav: wave.Wave_write, samples: np.ndarray) -> None:
+    def _write_chunk(
+        self,
+        wav: wave.Wave_write,
+        samples: np.ndarray,
+        on_audio: Callable[[np.ndarray, int], None] | None,
+    ) -> None:
         if samples.size == 0:
             return
+        start_sample = self.frames_written
         wav.writeframesraw(float32_to_pcm16(samples))
         self.frames_written += samples.size
+        if on_audio is not None:
+            on_audio(samples, start_sample)
         peak = float(np.max(np.abs(samples)))
         self.level = (
             min(100, max(1, round((20 * log10(peak) + 60) * 100 / 60)))
