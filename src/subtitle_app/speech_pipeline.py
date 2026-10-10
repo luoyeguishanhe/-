@@ -16,8 +16,8 @@ from .audio_processing import TARGET_SAMPLE_RATE, float32_to_pcm16
 
 
 FRAME_SAMPLES = 320  # 20 ms at 16 kHz; WebRTC VAD accepts 10, 20 or 30 ms.
-SILENCE_FRAMES = 30  # 0.6 seconds after the last voiced frame.
-MAX_SEGMENT_FRAMES = 600  # 12 seconds, to bound recognition latency.
+SILENCE_FRAMES = 50  # 1.0 second preserves pauses in slow reading.
+MAX_SEGMENT_FRAMES = 750  # 15 seconds bounds recognition latency.
 
 
 @dataclass(frozen=True)
@@ -136,8 +136,9 @@ class SpeechSegmenter:
 class SpeechPipeline:
     """Keep model inference away from the capture and UI threads."""
 
-    def __init__(self, model_size: str = "base") -> None:
+    def __init__(self, model_size: str = "small", language: str | None = None) -> None:
         self.model_size = model_size
+        self.language = language
         self.events: Queue[tuple[str, object]] = Queue()
         self._audio: Queue[AudioChunk] = Queue(maxsize=256)
         self._segments: Queue[SpeechSegment | None] = Queue(maxsize=12)
@@ -254,8 +255,8 @@ class SpeechPipeline:
             try:
                 parts, info = model.transcribe(
                     segment.audio,
-                    language=None,
-                    beam_size=1,
+                    language=self.language,
+                    beam_size=5,
                     vad_filter=False,
                     condition_on_previous_text=False,
                 )

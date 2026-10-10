@@ -48,6 +48,21 @@ class MainWindow(QMainWindow):
         device_row.addWidget(self.devices, 1)
         device_row.addWidget(self.refresh_button)
 
+        self.model_combo = QComboBox()
+        self.model_combo.addItem("准确优先 · small", "small")
+        self.model_combo.addItem("速度优先 · base", "base")
+        self.language_combo = QComboBox()
+        self.language_combo.addItem("自动识别语言", None)
+        self.language_combo.addItem("中文", "zh")
+        self.language_combo.addItem("英语", "en")
+        self.language_combo.addItem("日语", "ja")
+        self.language_combo.addItem("韩语", "ko")
+        recognition_row = QHBoxLayout()
+        recognition_row.addWidget(QLabel("识别模型"))
+        recognition_row.addWidget(self.model_combo, 1)
+        recognition_row.addWidget(QLabel("原声语言"))
+        recognition_row.addWidget(self.language_combo, 1)
+
         self.start_button = QPushButton("开始录音与识别")
         self.start_button.clicked.connect(self.start_recording)
         self.stop_button = QPushButton("停止并保存")
@@ -75,6 +90,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(description)
         layout.addLayout(device_row)
+        layout.addLayout(recognition_row)
         layout.addLayout(button_row)
         layout.addWidget(self.level_bar)
         layout.addWidget(self.status)
@@ -129,14 +145,19 @@ class MainWindow(QMainWindow):
         self.pending_device_index = int(device_index)
         self.recording_saved = False
         self.transcript.clear()
-        self.pipeline = SpeechPipeline()
+        model_size = str(self.model_combo.currentData())
+        self.pipeline = SpeechPipeline(model_size, self.language_combo.currentData())
         self.devices.setEnabled(False)
         self.refresh_button.setEnabled(False)
+        self.model_combo.setEnabled(False)
+        self.language_combo.setEnabled(False)
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.stop_button.setText("取消")
         self.status.setText("正在准备语音识别模型，录音尚未开始…")
-        self.asr_status.setText("首次运行需要下载 base 模型；下载完成后会自动开始录音。")
+        self.asr_status.setText(
+            f"正在加载 {model_size} 模型；首次使用需下载，完成后会自动开始录音。"
+        )
         self.pipeline.prepare()
 
     def stop_recording(self) -> None:
@@ -222,6 +243,8 @@ class MainWindow(QMainWindow):
     def _recording_finished(self) -> None:
         self.devices.setEnabled(True)
         self.refresh_button.setEnabled(True)
+        self.model_combo.setEnabled(True)
+        self.language_combo.setEnabled(True)
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(False)
         self.stop_button.setText("停止并保存")
