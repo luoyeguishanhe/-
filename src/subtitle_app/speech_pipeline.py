@@ -257,7 +257,9 @@ class SpeechPipeline:
                     segment.audio,
                     language=self.language,
                     beam_size=5,
-                    vad_filter=False,
+                    # WebRTC can include music before speech; Silero removes it
+                    # before Whisper decodes and prevents repeated hallucinations.
+                    vad_filter=True,
                     condition_on_previous_text=False,
                 )
                 transcript = "".join(part.text for part in parts).strip()
