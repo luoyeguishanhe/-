@@ -227,9 +227,11 @@ class SpeechPipeline:
     def _recognize(self) -> None:
         try:
             from faster_whisper import WhisperModel
+            from opencc import OpenCC
 
             cache_root = Path(os.environ.get("LOCALAPPDATA", Path.cwd())) / "SubtitleApp" / "models"
             cache_root.mkdir(parents=True, exist_ok=True)
+            chinese_converter = OpenCC("t2s")
             model = WhisperModel(
                 self.model_size,
                 device="cpu",
@@ -263,6 +265,8 @@ class SpeechPipeline:
                     condition_on_previous_text=False,
                 )
                 transcript = "".join(part.text for part in parts).strip()
+                if info.language == "zh":
+                    transcript = chinese_converter.convert(transcript)
                 if transcript:
                     self.events.put(("text", (segment, transcript, info.language)))
             except Exception as exc:
