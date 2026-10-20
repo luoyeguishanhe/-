@@ -12,6 +12,7 @@ import webrtcvad
 
 from .audio_processing import TARGET_SAMPLE_RATE, float32_to_pcm16
 from .recognition import WhisperRecognizer
+from .subtitles import cues_from_parts
 
 
 FRAME_SAMPLES = 320  # 20 ms at 16 kHz; WebRTC VAD accepts 10, 20 or 30 ms.
@@ -246,5 +247,9 @@ class SpeechPipeline:
                 result = recognizer.recognize(segment.audio, self.language)
                 if result["text"]:
                     self.events.put(("text", (segment, result["text"], result["language"])))
+                    self.events.put(("subtitles", cues_from_parts(
+                        result["parts"], segment.start_seconds,
+                        len(segment.audio) / TARGET_SAMPLE_RATE,
+                    )))
             except Exception as exc:
                 self.events.put(("warning", f"片段识别失败：{exc}"))

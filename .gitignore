@@ -15,3 +15,6 @@ models/
 benchmark.local.json
 benchmark-data/
 benchmark-results/
+*.srt
+/*.txt
+!/requirements.txt

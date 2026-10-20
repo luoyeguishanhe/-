@@ -12,6 +12,7 @@ TRANSCRIBE_SETTINGS = {
     "condition_on_previous_text": False,
     # Zero temperature makes model comparisons repeatable (no sampling fallback).
     "temperature": 0.0,
+    "word_timestamps": True,
 }
 
 
@@ -40,7 +41,10 @@ class WhisperRecognizer:
             texts.append(text)
             records.append({"start": part.start, "end": part.end, "text": text.strip(),
                             "avg_logprob": part.avg_logprob,
-                            "no_speech_prob": part.no_speech_prob})
+                            "no_speech_prob": part.no_speech_prob,
+                            "words": [{"start": word.start, "end": word.end,
+                                       "text": self.converter.convert(word.word) if info.language == "zh" else word.word}
+                                      for word in (getattr(part, "words", None) or [])]})
         return {
             "text": "".join(texts).strip(),
             "language": info.language,
