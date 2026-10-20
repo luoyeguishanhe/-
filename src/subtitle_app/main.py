@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 from .audio_capture import SystemAudioRecorder, list_output_devices
 from .speech_pipeline import SpeechPipeline
 from .media_pipeline import MediaTranscriber
+from .subtitle_editor import SubtitleEditor
 from .subtitles import SubtitleCue, render_srt, render_txt, save_new_exports, write_export
 
 
@@ -46,6 +47,8 @@ class MainWindow(QMainWindow):
         self._session_has_warnings = False
         self._capture_started = False
         self._close_requested = False
+        self._editor = None
+        self._editor_key = None
 
         title = QLabel("语音识别与字幕")
         title.setStyleSheet("font-size: 24px; font-weight: 600;")
@@ -93,6 +96,9 @@ class MainWindow(QMainWindow):
         self.export_srt_button.clicked.connect(lambda: self.export_text("srt"))
         self.save_txt_button.setEnabled(False)
         self.export_srt_button.setEnabled(False)
+        self.edit_button = QPushButton("预览与校对…")
+        self.edit_button.setEnabled(False)
+        self.edit_button.clicked.connect(self.open_editor)
         self.subtitle_offset = QDoubleSpinBox()
         self.subtitle_offset.setRange(-86400, 86400)
         self.subtitle_offset.setDecimals(3)
@@ -102,6 +108,7 @@ class MainWindow(QMainWindow):
         export_row = QHBoxLayout()
         export_row.addWidget(self.save_txt_button)
         export_row.addWidget(self.export_srt_button)
+        export_row.addWidget(self.edit_button)
         export_row.addStretch()
         export_row.addWidget(QLabel("字幕偏移（秒）"))
         export_row.addWidget(self.subtitle_offset)
@@ -173,6 +180,11 @@ class MainWindow(QMainWindow):
         self.start_button.setEnabled(bool(available) and self.pipeline is None and self.file_job is None)
 
     def _reset_results(self, source: Path) -> None:
+        self.edit_button.setEnabled(False)
+        if self._editor is not None:
+            self._editor.deleteLater()
+        self._editor = None
+        self._editor_key = None
         self.session_audio_path = source
         self.recording_saved = False
         self.paragraphs.clear()
@@ -433,12 +445,27 @@ class MainWindow(QMainWindow):
             self.export_status.setText("没有识别出文字，未生成 TXT 或 SRT。")
         self.save_txt_button.setEnabled(bool(self.paragraphs))
         self.export_srt_button.setEnabled(bool(self.subtitle_cues))
+        self.edit_button.setEnabled(bool(self.subtitle_cues) and self.session_audio_path is not None)
         if self._close_requested:
             QTimer.singleShot(100, self.close)
 
     def _offset_changed(self) -> None:
         if self.subtitle_cues:
             self.export_status.setText("字幕偏移已修改；重新点击“导出 SRT”后生效。已保存文件不会自动改写。")
+
+    def open_editor(self) -> None:
+        if self.pipeline is not None or self.file_job is not None or self.recorder.is_active:
+            return
+        if self.session_audio_path is None or not self.subtitle_cues:
+            return
+        key = (self.session_audio_path, tuple(self.subtitle_cues), self.subtitle_offset.value())
+        if key != self._editor_key:
+            if self._editor is not None:
+                self._editor.deleteLater()
+            self._editor = SubtitleEditor(self.session_audio_path, self.subtitle_cues,
+                                          self.subtitle_offset.value(), self)
+            self._editor_key = key
+        self._editor.exec()
 
     def export_text(self, kind: str) -> None:
         if self.pipeline is not None or self.file_job is not None:
