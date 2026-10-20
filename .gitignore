@@ -11,3 +11,7 @@ dist/
 user_settings.json
 transcripts/
 models/
+*.wav
+benchmark.local.json
+benchmark-data/
+benchmark-results/

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-import os
-from pathlib import Path
 from queue import Empty, Full, Queue
 from threading import Event, Thread
 
@@ -13,6 +11,7 @@ import numpy as np
 import webrtcvad
 
 from .audio_processing import TARGET_SAMPLE_RATE, float32_to_pcm16
+from .recognition import WhisperRecognizer
 
 
 FRAME_SAMPLES = 320  # 20 ms at 16 kHz; WebRTC VAD accepts 10, 20 or 30 ms.
@@ -226,18 +225,7 @@ class SpeechPipeline:
 
     def _recognize(self) -> None:
         try:
-            from faster_whisper import WhisperModel
-            from opencc import OpenCC
-
-            cache_root = Path(os.environ.get("LOCALAPPDATA", Path.cwd())) / "SubtitleApp" / "models"
-            cache_root.mkdir(parents=True, exist_ok=True)
-            chinese_converter = OpenCC("t2s")
-            model = WhisperModel(
-                self.model_size,
-                device="cpu",
-                compute_type="int8",
-                download_root=str(cache_root),
-            )
+            recognizer = WhisperRecognizer(self.model_size)
         except Exception as exc:
             if not self._cancel.is_set():
                 self.events.put(("fatal", f"ASR 模型加载失败：{exc}"))
@@ -255,19 +243,8 @@ class SpeechPipeline:
                 self.events.put(("complete", None))
                 return
             try:
-                parts, info = model.transcribe(
-                    segment.audio,
-                    language=self.language,
-                    beam_size=5,
-                    # WebRTC can include music before speech; Silero removes it
-                    # before Whisper decodes and prevents repeated hallucinations.
-                    vad_filter=True,
-                    condition_on_previous_text=False,
-                )
-                transcript = "".join(part.text for part in parts).strip()
-                if info.language == "zh":
-                    transcript = chinese_converter.convert(transcript)
-                if transcript:
-                    self.events.put(("text", (segment, transcript, info.language)))
+                result = recognizer.recognize(segment.audio, self.language)
+                if result["text"]:
+                    self.events.put(("text", (segment, result["text"], result["language"])))
             except Exception as exc:
                 self.events.put(("warning", f"片段识别失败：{exc}"))

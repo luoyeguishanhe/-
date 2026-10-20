@@ -49,8 +49,9 @@ class MainWindow(QMainWindow):
         device_row.addWidget(self.refresh_button)
 
         self.model_combo = QComboBox()
-        self.model_combo.addItem("准确优先 · small", "small")
+        self.model_combo.addItem("标准 · small", "small")
         self.model_combo.addItem("速度优先 · base", "base")
+        self.model_combo.addItem("较大模型 · medium（更慢）", "medium")
         self.language_combo = QComboBox()
         self.language_combo.addItem("自动识别语言", None)
         self.language_combo.addItem("中文", "zh")

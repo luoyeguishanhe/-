@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "id": "reading",
+      "label": "我的中文朗读",
+      "audio": "我的录音.wav",
+      "evaluation": {
+        "reference": "benchmark-data/reading.reference.txt",
+        "status": "draft",
+        "source_url": "",
+        "start": 0,
+        "end": 30
+      }
+    }
+  ]
+}
