@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 from .audio_capture import SystemAudioRecorder, list_output_devices
 from .speech_pipeline import SpeechPipeline
+from .media_pipeline import MediaTranscriber
 from .subtitles import SubtitleCue, render_srt, render_txt, save_new_exports, write_export
 
 
@@ -34,6 +35,7 @@ class MainWindow(QMainWindow):
         self.resize(820, 680)
         self.recorder = SystemAudioRecorder()
         self.pipeline: SpeechPipeline | None = None
+        self.file_job: MediaTranscriber | None = None
         self.output_path: Path | None = None
         self.pending_device_index: int | None = None
         self.recording_saved = False
@@ -45,9 +47,9 @@ class MainWindow(QMainWindow):
         self._capture_started = False
         self._close_requested = False
 
-        title = QLabel("系统声音识别")
+        title = QLabel("语音识别与字幕")
         title.setStyleSheet("font-size: 24px; font-weight: 600;")
-        description = QLabel("选择播放视频声音的设备，程序会录制 WAV 并实时识别语音。")
+        description = QLabel("可录制系统声音，或直接选择本地视频生成 TXT 和 SRT 字幕。")
         description.setWordWrap(True)
 
         self.devices = QComboBox()
@@ -78,7 +80,10 @@ class MainWindow(QMainWindow):
         self.stop_button = QPushButton("停止并保存")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_recording)
+        self.video_button = QPushButton("选择本地视频…")
+        self.video_button.clicked.connect(self.start_video)
         button_row = QHBoxLayout()
+        button_row.addWidget(self.video_button)
         button_row.addWidget(self.start_button)
         button_row.addWidget(self.stop_button)
 
@@ -92,7 +97,7 @@ class MainWindow(QMainWindow):
         self.subtitle_offset.setRange(-86400, 86400)
         self.subtitle_offset.setDecimals(3)
         self.subtitle_offset.setSingleStep(0.1)
-        self.subtitle_offset.setToolTip("0 表示与录音同步；正数让字幕延后，负数让字幕提前。调整后重新导出 SRT。")
+        self.subtitle_offset.setToolTip("0 表示与当前源文件同步；正数让字幕延后，负数让字幕提前。调整后重新导出 SRT。")
         self.subtitle_offset.valueChanged.connect(self._offset_changed)
         export_row = QHBoxLayout()
         export_row.addWidget(self.save_txt_button)
@@ -100,13 +105,17 @@ class MainWindow(QMainWindow):
         export_row.addStretch()
         export_row.addWidget(QLabel("字幕偏移（秒）"))
         export_row.addWidget(self.subtitle_offset)
-        self.export_status = QLabel("停止并完成识别后，自动在 WAV 旁保存 TXT 和 SRT。字幕时间从录音开始计算。")
+        self.export_status = QLabel("完成识别后，自动在录音或视频旁保存 TXT 和 SRT；也可以另存到其他位置。")
         self.export_status.setWordWrap(True)
 
         self.level_bar = QProgressBar()
         self.level_bar.setRange(0, 100)
         self.level_bar.setValue(0)
         self.level_bar.setFormat("音量 %p%")
+        self.file_progress = QProgressBar()
+        self.file_progress.setRange(0, 1000)
+        self.file_progress.setValue(0)
+        self.file_progress.setVisible(False)
         self.status = QLabel("准备就绪。音量条跳动表示已采集到声音。")
         self.status.setWordWrap(True)
         self.asr_status = QLabel("语音识别尚未启动。首次运行需下载本地模型。")
@@ -126,6 +135,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(export_row)
         layout.addWidget(self.export_status)
         layout.addWidget(self.level_bar)
+        layout.addWidget(self.file_progress)
         layout.addWidget(self.status)
         layout.addWidget(self.asr_status)
         layout.addWidget(self.transcript, 1)
@@ -160,9 +170,57 @@ class MainWindow(QMainWindow):
             self.status.setText("请选择视频实际使用的输出设备；开始录音后音量条应跳动。")
         else:
             self.status.setText("没有找到 WASAPI 系统输出设备，请检查 Windows 音频设备。")
-        self.start_button.setEnabled(bool(available))
+        self.start_button.setEnabled(bool(available) and self.pipeline is None and self.file_job is None)
+
+    def _reset_results(self, source: Path) -> None:
+        self.session_audio_path = source
+        self.recording_saved = False
+        self.paragraphs.clear()
+        self.subtitle_cues.clear()
+        self._exports_saved = False
+        self._session_has_warnings = False
+        self._capture_started = False
+        self.save_txt_button.setEnabled(False)
+        self.export_srt_button.setEnabled(False)
+        self.transcript.clear()
+
+    def start_video(self) -> None:
+        if self.pipeline is not None or self.file_job is not None or self.recorder.is_active:
+            return
+        if not self._confirm_unsaved("处理新视频并清空这些文字"):
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "选择本地视频", "",
+            "视频文件 (*.mp4 *.mkv *.mov *.avi *.webm *.m4v *.ts *.mpeg *.mpg);;所有文件 (*)",
+        )
+        if not filename:
+            return
+        source = Path(filename)
+        self._reset_results(source)
+        self.subtitle_offset.setValue(0)
+        self.output_path = None
+        self.pending_device_index = None
+        self.devices.setEnabled(False)
+        self.refresh_button.setEnabled(False)
+        self.model_combo.setEnabled(False)
+        self.language_combo.setEnabled(False)
+        self.start_button.setEnabled(False)
+        self.video_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        self.stop_button.setText("取消处理")
+        self.level_bar.setVisible(False)
+        self.file_progress.setVisible(True)
+        self.file_progress.setRange(0, 0)
+        self.file_progress.setFormat("正在准备…")
+        self.export_status.setText("识别完成后自动在视频旁保存 TXT 和 SRT；字幕默认按视频音轨同步。")
+        self.status.setText(f"正在读取本地视频：{source}")
+        self.asr_status.setText("正在检查音轨…")
+        self.file_job = MediaTranscriber(source, str(self.model_combo.currentData()), self.language_combo.currentData())
+        self.file_job.start()
 
     def start_recording(self) -> None:
+        if self.pipeline is not None or self.file_job is not None or self.recorder.is_active:
+            return
         device_index = self.devices.currentData()
         if device_index is None:
             return
@@ -178,15 +236,9 @@ class MainWindow(QMainWindow):
         if self.output_path.suffix.lower() != ".wav":
             self.output_path = self.output_path.with_suffix(".wav")
         self.pending_device_index = int(device_index)
-        self.recording_saved = False
-        self.session_audio_path = self.output_path
-        self.paragraphs.clear()
-        self.subtitle_cues.clear()
-        self._exports_saved = False
-        self._session_has_warnings = False
-        self._capture_started = False
-        self.save_txt_button.setEnabled(False)
-        self.export_srt_button.setEnabled(False)
+        self._reset_results(self.output_path)
+        self.level_bar.setVisible(True)
+        self.file_progress.setVisible(False)
         self.export_status.setText("识别完成后将自动保存 TXT 和 SRT；也可以另存到其他位置。")
         self.transcript.clear()
         model_size = str(self.model_combo.currentData())
@@ -196,6 +248,7 @@ class MainWindow(QMainWindow):
         self.model_combo.setEnabled(False)
         self.language_combo.setEnabled(False)
         self.start_button.setEnabled(False)
+        self.video_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.stop_button.setText("取消")
         self.status.setText("正在准备语音识别模型，录音尚未开始…")
@@ -205,6 +258,11 @@ class MainWindow(QMainWindow):
         self.pipeline.prepare()
 
     def stop_recording(self) -> None:
+        if self.file_job is not None:
+            self.file_job.cancel()
+            self.stop_button.setEnabled(False)
+            self.status.setText("正在取消；当前片段处理结束后保存已有结果。")
+            return
         if self.recorder.is_active:
             self.recorder.stop()
             self.stop_button.setEnabled(False)
@@ -241,6 +299,53 @@ class MainWindow(QMainWindow):
             elif kind == "warning":
                 self._session_has_warnings = True
                 self.status.setText(str(value))
+        job = self.file_job
+        if job is not None:
+            while (event := job.next_event()) is not None:
+                kind, value = event
+                if kind == "media_info":
+                    if value.duration_seconds is not None:
+                        self.file_progress.setRange(0, 1000)
+                        self.file_progress.setValue(0)
+                        self.file_progress.setFormat(f"共 {value.duration_seconds:.1f} 秒，正在准备模型…")
+                    self.asr_status.setText("已找到音轨，正在准备模型。")
+                elif kind == "loading":
+                    self.asr_status.setText(f"正在加载 {value}；首次使用可能需要下载。")
+                elif kind == "progress":
+                    position, duration = value
+                    if duration is not None:
+                        self.file_progress.setRange(0, 1000)
+                        self.file_progress.setValue(min(999, round(position / duration * 1000)))
+                        self.file_progress.setFormat(f"已处理 {position:.1f} / {duration:.1f} 秒（%p%）")
+                    else:
+                        self.file_progress.setFormat(f"已处理 {position:.1f} 秒（总时长未知）")
+                elif kind == "segment":
+                    start, end = value
+                    self.asr_status.setText(f"正在识别视频 {start:.1f}～{end:.1f} 秒…")
+                elif kind == "text":
+                    self._receive_text(value)
+                elif kind == "subtitles":
+                    self.subtitle_cues.extend(value)
+                elif kind == "warning":
+                    self._session_has_warnings = True
+                    self.asr_status.setText(str(value))
+                elif kind in ("complete", "cancelled", "fatal"):
+                    self.file_progress.setRange(0, 1000)
+                    if kind == "complete":
+                        self.file_progress.setValue(1000)
+                        self.file_progress.setFormat("处理完成（100%）")
+                        self.status.setText(f"本地视频处理完成：{self.session_audio_path}")
+                        self.asr_status.setText("语音识别完成。")
+                    elif kind == "cancelled":
+                        self.file_progress.setFormat("已取消；已有结果标为 partial")
+                        self.status.setText("已取消本地视频处理。")
+                        self.asr_status.setText("已有识别结果会保留，可另存。")
+                    else:
+                        self.file_progress.setFormat("处理失败；已有结果标为 partial")
+                        self.status.setText(str(value))
+                        QMessageBox.warning(self, "本地视频处理失败", str(value))
+                    self._recording_finished(completed=kind == "complete")
+                    break
         pipeline = self.pipeline
         if pipeline is not None:
             while (event := pipeline.next_event()) is not None:
@@ -267,13 +372,7 @@ class MainWindow(QMainWindow):
                     start, end = value
                     self.asr_status.setText(f"正在识别 {start:.1f}～{end:.1f} 秒的语音…")
                 elif kind == "text":
-                    segment, transcript, language = value
-                    self.paragraphs.append(transcript)
-                    self.transcript.appendPlainText(
-                        f"[{segment.start_seconds:.1f}～{segment.end_seconds:.1f} 秒] "
-                        f"{transcript}"
-                    )
-                    self.asr_status.setText(f"识别到 {language} 语音。")
+                    self._receive_text(value)
                 elif kind == "subtitles":
                     self.subtitle_cues.extend(value)
                 elif kind == "complete":
@@ -291,8 +390,16 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "语音识别不可用", str(value))
                     self._recording_finished()
                     break
-        if self.output_path is None and not self.recorder.is_active and self.devices.count():
+        if self.pipeline is None and self.file_job is None and not self.recorder.is_active and self.devices.count() and not self._close_requested:
             self.start_button.setEnabled(True)
+
+    def _receive_text(self, value) -> None:
+        segment, transcript, language = value
+        self.paragraphs.append(transcript)
+        self.transcript.appendPlainText(
+            f"[{segment.start_seconds:.1f}～{segment.end_seconds:.1f} 秒] {transcript}"
+        )
+        self.asr_status.setText(f"识别到 {language} 语音。")
 
     def _recording_finished(self, completed: bool = False) -> None:
         self.devices.setEnabled(True)
@@ -300,11 +407,13 @@ class MainWindow(QMainWindow):
         self.model_combo.setEnabled(True)
         self.language_combo.setEnabled(True)
         self.start_button.setEnabled(False)
+        self.video_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.stop_button.setText("停止并保存")
         self.output_path = None
         self.pending_device_index = None
         self.pipeline = None
+        self.file_job = None
         self._capture_started = False
         if self.paragraphs and self.session_audio_path is not None and not self._exports_saved:
             try:
@@ -332,7 +441,7 @@ class MainWindow(QMainWindow):
             self.export_status.setText("字幕偏移已修改；重新点击“导出 SRT”后生效。已保存文件不会自动改写。")
 
     def export_text(self, kind: str) -> None:
-        if self.pipeline is not None:
+        if self.pipeline is not None or self.file_job is not None:
             return
         try:
             content = render_txt(self.paragraphs) if kind == "txt" else render_srt(self.subtitle_cues, self.subtitle_offset.value())
@@ -374,6 +483,13 @@ class MainWindow(QMainWindow):
         ) == QMessageBox.StandardButton.Yes
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self.file_job is not None:
+            self._close_requested = True
+            self.file_job.cancel()
+            self.stop_button.setEnabled(False)
+            self.export_status.setText("正在取消视频处理并保存已有结果，然后退出…")
+            event.ignore()
+            return
         if self.pipeline is not None:
             self._close_requested = True
             event.ignore()

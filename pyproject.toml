@@ -16,6 +16,7 @@ dependencies = [
     "webrtcvad-wheels>=2.0.14",
     "faster-whisper>=1.1",
     "opencc-python-reimplemented>=0.1.7",
+    "av>=11",
 ]
 
 [project.scripts]
