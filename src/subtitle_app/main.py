@@ -26,6 +26,7 @@ from .audio_capture import SystemAudioRecorder, list_output_devices
 from .speech_pipeline import SpeechPipeline
 from .media_pipeline import MediaTranscriber
 from .subtitle_editor import SubtitleEditor
+from .subtitle_tools import SubtitleToolsDialog
 from .subtitles import SubtitleCue, render_srt, render_txt, save_new_exports, write_export
 
 
@@ -89,6 +90,9 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self.video_button)
         button_row.addWidget(self.start_button)
         button_row.addWidget(self.stop_button)
+        self.tools_button = QPushButton("翻译与封装…")
+        self.tools_button.clicked.connect(self.open_subtitle_tools)
+        button_row.addWidget(self.tools_button)
 
         self.save_txt_button = QPushButton("保存 TXT…")
         self.save_txt_button.clicked.connect(lambda: self.export_text("txt"))
@@ -180,6 +184,7 @@ class MainWindow(QMainWindow):
         self.start_button.setEnabled(bool(available) and self.pipeline is None and self.file_job is None)
 
     def _reset_results(self, source: Path) -> None:
+        self.tools_button.setEnabled(False)
         self.edit_button.setEnabled(False)
         if self._editor is not None:
             self._editor.deleteLater()
@@ -414,6 +419,7 @@ class MainWindow(QMainWindow):
         self.asr_status.setText(f"识别到 {language} 语音。")
 
     def _recording_finished(self, completed: bool = False) -> None:
+        self.tools_button.setEnabled(True)
         self.devices.setEnabled(True)
         self.refresh_button.setEnabled(True)
         self.model_combo.setEnabled(True)
@@ -466,6 +472,15 @@ class MainWindow(QMainWindow):
                                           self.subtitle_offset.value(), self)
             self._editor_key = key
         self._editor.exec()
+
+    def open_subtitle_tools(self) -> None:
+        if self.pipeline is not None or self.file_job is not None or self.recorder.is_active:
+            return
+        from .subtitle_editor import preview_cues
+        dialog = SubtitleToolsDialog(self.session_audio_path,
+                                     preview_cues(self.subtitle_cues, self.subtitle_offset.value()), self)
+        dialog.exec()
+        dialog.deleteLater()
 
     def export_text(self, kind: str) -> None:
         if self.pipeline is not None or self.file_job is not None:

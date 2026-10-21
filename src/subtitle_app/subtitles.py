@@ -16,6 +16,34 @@ class SubtitleCue:
     text: str
 
 
+def parse_srt(content: str) -> list[SubtitleCue]:
+    """Read numbered UTF-8 SRT blocks, rejecting malformed/inverted timings."""
+    content = content.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not content:
+        raise ValueError("SRT 文件为空")
+    timestamp = r"(\d+):([0-5]\d):([0-5]\d)[,.](\d{3})"
+    pattern = re.compile(rf"^{timestamp}\s*-->\s*{timestamp}\s*$")
+    cues = []
+    for block in re.split(r"\n[ \t]*\n", content):
+        lines = block.splitlines()
+        if len(lines) < 3 or not lines[0].strip().isdigit():
+            raise ValueError("SRT 格式错误：每条应包含编号、时间行和文字")
+        match = pattern.fullmatch(lines[1].strip())
+        if match is None:
+            raise ValueError(f"第 {lines[0]} 条字幕的时间格式错误")
+        values = [int(item) for item in match.groups()]
+        start, end = [(values[i] * 3600 + values[i + 1] * 60 + values[i + 2])
+                      + values[i + 3] / 1000 for i in (0, 4)]
+        text = "\n".join(line.strip() for line in lines[2:]).strip()
+        if end <= start or not text:
+            raise ValueError(f"第 {lines[0]} 条字幕的结束时间或文字无效")
+        cues.append(SubtitleCue(start, end, text))
+    cues.sort(key=lambda cue: cue.start)
+    if any(right.start < left.end for left, right in zip(cues, cues[1:])):
+        raise ValueError("字幕时间存在重叠，请先在字幕编辑器中校对")
+    return cues
+
+
 def _clean(text: str) -> str:
     return " ".join(str(text).split())
 

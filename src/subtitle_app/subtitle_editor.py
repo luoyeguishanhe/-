@@ -132,6 +132,9 @@ class SubtitleEditor(QDialog):
         bottom = QHBoxLayout()
         bottom.addWidget(self.status, 1)
         bottom.addWidget(self.save_button)
+        self.tools_button = QPushButton("翻译与封装…")
+        self.tools_button.clicked.connect(self.open_tools)
+        bottom.addWidget(self.tools_button)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         heading = QLabel(source.name)
@@ -260,6 +263,15 @@ class SubtitleEditor(QDialog):
             return
         self.saved_cues = list(self.cues)
         self.status.setText(f"已保存：{path}")
+
+    def open_tools(self):
+        if not self.apply_current():
+            return
+        from .subtitle_tools import SubtitleToolsDialog
+        self.player.pause()
+        dialog = SubtitleToolsDialog(self.source, self.cues, self)
+        dialog.exec()
+        dialog.deleteLater()
 
     def reject(self):
         # QDialog routes Escape and the window close button through reject().
