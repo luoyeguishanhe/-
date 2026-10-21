@@ -121,3 +121,50 @@ class SubtitleToolsTests(unittest.TestCase):
             dialog.reject()
         question.assert_called_once()
         self.assertEqual(dialog.translated, self.cues[:1])
+
+    def test_actual_http_costs_accumulate_across_runs_and_export_without_secrets(self):
+        import json
+        server = LocalChatServer()
+        self.addCleanup(server.close)
+        dialog = self.dialog
+        dialog.base_url.setText(server.base_url)
+        dialog.model.setText('test-model')
+        dialog.api_key.setText('never-in-report')
+        dialog.pricing_enabled.setChecked(True)
+        dialog.input_price.setValue(2)
+        dialog.output_price.setValue(8)
+        dialog.batch_size.setValue(1)
+        dialog.start_translation()
+        self.assertFalse(dialog.pricing_enabled.isEnabled())
+        self.assertFalse(dialog.input_price.isEnabled())
+        self.wait_job()
+        self.assertIn('CNY 0.000240', dialog.cost_label.text())
+        dialog.input_price.setValue(3)
+        dialog.output_price.setValue(9)
+        # Editing future rates does not rewrite the completed request's cost.
+        self.assertIn('CNY 0.000240', dialog.cost_label.text())
+        with patch('subtitle_app.subtitle_tools.QMessageBox.question', return_value=QMessageBox.StandardButton.Yes):
+            dialog.start_translation()
+        self.wait_job()
+        self.assertIn('CNY 0.000300', dialog.cost_label.text())
+        self.assertIn('CNY 0.000540', dialog.window_usage_label.text())
+        output = self.folder / 'usage.json'
+        with patch('subtitle_app.subtitle_tools.QFileDialog.getSaveFileName', return_value=(str(output), '')):
+            dialog.export_usage_report()
+        text = output.read_text(encoding='utf-8')
+        report = json.loads(text)
+        self.assertEqual(report['reported_input_tokens'], 80)
+        self.assertEqual(report['reported_output_tokens'], 40)
+        self.assertEqual(len(report['tasks']), 2)
+        self.assertNotIn('never-in-report', text)
+        self.assertNotIn('Hello', text)
+        self.assertEqual(report['estimated_known_cost_by_currency']['CNY'], '0.00054')
+
+    def test_changing_provider_or_model_requires_reenabling_pricing(self):
+        dialog = self.dialog
+        dialog.pricing_enabled.setChecked(True)
+        dialog.preset.setCurrentIndex(2)
+        self.assertFalse(dialog.pricing_enabled.isChecked())
+        dialog.pricing_enabled.setChecked(True)
+        dialog.model.textEdited.emit('different-model')
+        self.assertFalse(dialog.pricing_enabled.isChecked())

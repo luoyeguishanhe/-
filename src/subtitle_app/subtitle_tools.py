@@ -1,14 +1,17 @@
 """File-based subtitle tools, available independently of recognition."""
 
 from pathlib import Path
+import json
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
-    QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSpinBox, QVBoxLayout,
+    QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QProgressBar,
+    QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from .background_job import BackgroundJob
+from .billing import Pricing, UsageRecord, usage_report, window_summary
 from .subtitle_mux import mux_subtitles
 from .subtitles import parse_srt, render_srt, write_export
 from .translation import TranslationConfig, translate_subtitles
@@ -26,6 +29,8 @@ class SubtitleToolsDialog(QDialog):
         self.job_kind = None
         self.job = None
         self.close_requested = False
+        self.usage_records = []
+        self.current_usage_record = None
         self.setWindowTitle("字幕翻译与封装")
         self.resize(860, 820)
         self.source_label = QLineEdit(str(self.source or ""))
@@ -54,6 +59,8 @@ class SubtitleToolsDialog(QDialog):
         self.api_key.setPlaceholderText("云端服务填写 Key；本地无鉴权可留空")
         self.preset.currentIndexChanged.connect(self.apply_preset)
         self.base_url.textEdited.connect(lambda: self.api_key.clear())
+        self.base_url.textEdited.connect(self.invalidate_pricing)
+        self.model.textEdited.connect(self.invalidate_pricing)
         self.target = QComboBox()
         self.target.addItems(["简体中文", "英语", "日语", "韩语"])
         self.batch_size = QSpinBox()
@@ -66,6 +73,20 @@ class SubtitleToolsDialog(QDialog):
         self.save_translation_button.clicked.connect(self.save_translation)
         self.usage_label = QLabel("Token 用量：尚未请求")
         self.usage_label.setWordWrap(True)
+        self.pricing_enabled = QCheckBox("启用费用估算（单价仅用于下次翻译）")
+        self.currency = QComboBox()
+        self.currency.addItem("人民币 CNY", "CNY")
+        self.currency.addItem("美元 USD", "USD")
+        self.input_price = self.price_box()
+        self.output_price = self.price_box()
+        self.pricing_enabled.toggled.connect(self.update_pricing_controls)
+        self.cost_label = QLabel("本次费用估算：尚未请求")
+        self.cost_label.setWordWrap(True)
+        self.window_usage_label = QLabel(window_summary(self.usage_records))
+        self.window_usage_label.setWordWrap(True)
+        self.report_button = QPushButton("导出用量报告…")
+        self.report_button.clicked.connect(self.export_usage_report)
+        self.report_button.setEnabled(False)
         self.mux_button = QPushButton("封装为带字幕的 MKV…")
         self.mux_button.clicked.connect(self.start_mux)
         self.cancel_button = QPushButton("取消处理")
@@ -77,7 +98,14 @@ class SubtitleToolsDialog(QDialog):
         self.status = QLabel("选择视频和字幕，生成可在播放器中开关字幕的新视频。")
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         self.status.setWordWrap(True)
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
         heading = QLabel("字幕翻译与封装")
@@ -103,6 +131,17 @@ class SubtitleToolsDialog(QDialog):
         options.addWidget(self.batch_size)
         form.addRow("目标语言 / 每批条数", options)
         layout.addLayout(form)
+        layout.addWidget(self.pricing_enabled)
+        pricing = QHBoxLayout()
+        pricing.addWidget(self.currency)
+        pricing.addWidget(QLabel("输入 / 百万 token"))
+        pricing.addWidget(self.input_price, 1)
+        pricing.addWidget(QLabel("输出 / 百万 token"))
+        pricing.addWidget(self.output_price, 1)
+        layout.addLayout(pricing)
+        price_note = QLabel("请按服务商单价填写；本地免费服务可填 0。估算未扣缓存折扣或赠送额度，以服务账单为准。")
+        price_note.setWordWrap(True)
+        layout.addWidget(price_note)
         privacy = QLabel("翻译只发送字幕文字，不上传视频或音频。API Key 仅保留在当前窗口，关闭后清除。")
         privacy.setWordWrap(True)
         layout.addWidget(privacy)
@@ -111,6 +150,9 @@ class SubtitleToolsDialog(QDialog):
         translate_row.addWidget(self.save_translation_button)
         layout.addLayout(translate_row)
         layout.addWidget(self.usage_label)
+        layout.addWidget(self.cost_label)
+        layout.addWidget(self.window_usage_label)
+        layout.addWidget(self.report_button)
         note = QLabel("输出 MKV，直接复制全部视频和音轨，使用当前字幕；不带入旧字幕轨。原文件保留。")
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -125,6 +167,54 @@ class SubtitleToolsDialog(QDialog):
         self.timer.timeout.connect(self.poll_job)
         self.timer.start()
         self.refresh_preview()
+        self.update_pricing_controls()
+
+    @staticmethod
+    def price_box():
+        box = QDoubleSpinBox()
+        box.setDecimals(6)
+        box.setRange(0, 1_000_000)
+        box.setSingleStep(0.1)
+        return box
+
+    def invalidate_pricing(self):
+        # Avoid carrying a different provider/model's tariff into a new request.
+        self.pricing_enabled.setChecked(False)
+
+    def update_pricing_controls(self):
+        enabled = self.pricing_enabled.isChecked() and self.job is None
+        for widget in (self.currency, self.input_price, self.output_price):
+            widget.setEnabled(enabled)
+
+    def refresh_billing(self):
+        record = self.current_usage_record
+        if record is not None:
+            usage = record.usage
+            total = f"；已知合计 {usage.prompt_tokens + usage.completion_tokens} tokens" if usage.reported_calls else ""
+            self.usage_label.setText("本次翻译：" + usage.summary() + total)
+            self.cost_label.setText(record.cost_summary())
+        self.window_usage_label.setText(window_summary(self.usage_records))
+        self.report_button.setEnabled(self.job is None and any(
+            item.usage.reported_calls + item.usage.unreported_calls for item in self.usage_records))
+
+    def export_usage_report(self):
+        if self.job is not None:
+            return
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "导出本窗口用量报告", "翻译用量报告.json", "JSON 报告 (*.json)",
+            options=QFileDialog.Option.DontConfirmOverwrite)
+        if not filename:
+            return
+        path = Path(filename).with_suffix(".json")
+        if path.exists():
+            self.status.setText("报告文件已存在，请使用新文件名。")
+            return
+        try:
+            write_export(path, json.dumps(usage_report(self.usage_records), ensure_ascii=False, indent=2) + "\n")
+        except (OSError, ValueError) as exc:
+            self.status.setText(f"报告保存失败：{exc}")
+            return
+        self.status.setText(f"用量报告已保存：{path}（不含 API Key 或字幕文字）")
 
     def refresh_preview(self):
         self.cue_label.setText(f"原文 {len(self.cues)} 条；已翻译 {len(self.translated)} 条")
@@ -141,6 +231,7 @@ class SubtitleToolsDialog(QDialog):
 
     def apply_preset(self, index):
         self.api_key.clear()
+        self.invalidate_pricing()
         if index == 1:
             self.base_url.setText("https://dashscope.aliyuncs.com/compatible-mode/v1")
             self.model.setText("qwen-plus")
@@ -186,12 +277,15 @@ class SubtitleToolsDialog(QDialog):
 
     def set_busy(self, busy):
         for widget in (self.video_button, self.srt_button, self.track, self.preset,
-                       self.base_url, self.model, self.api_key, self.target, self.batch_size):
+                       self.base_url, self.model, self.api_key, self.target, self.batch_size,
+                       self.pricing_enabled):
             widget.setEnabled(not busy)
         self.refresh_preview()
         self.cancel_button.setEnabled(busy)
         self.progress.setVisible(busy)
         self.progress.setRange(0, 0 if busy else 100)
+        self.update_pricing_controls()
+        self.refresh_billing()
 
     def start_mux(self):
         if self.job is not None or not self.source or not self.selected_cues():
@@ -230,6 +324,10 @@ class SubtitleToolsDialog(QDialog):
             return
         if not self.confirm_discard_translation():
             return
+        pricing = (Pricing(self.input_price.value(), self.output_price.value(), self.currency.currentData())
+                   if self.pricing_enabled.isChecked() else None)
+        self.current_usage_record = UsageRecord(config.endpoint(), config.model.strip(), pricing)
+        self.usage_records.append(self.current_usage_record)
         self.translated = []
         self.translation_complete = False
         self.translation_saved = True
@@ -279,6 +377,10 @@ class SubtitleToolsDialog(QDialog):
                 self.status.setText(str(value))
             elif kind == "usage":
                 self.usage_label.setText(str(value))
+            elif kind == "token_usage":
+                if self.current_usage_record is not None:
+                    self.current_usage_record.usage = value
+                    self.refresh_billing()
             elif kind == "translated":
                 self.translated = list(value)
                 self.translation_saved = False

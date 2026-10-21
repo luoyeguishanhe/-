@@ -1,6 +1,6 @@
 """Translate subtitle text via an OpenAI-compatible chat completions endpoint."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import re
 from threading import Event
@@ -152,9 +152,18 @@ def translate_subtitles(cues: list[SubtitleCue], config: TranslationConfig, canc
                                     [{"id": identifier, "text": cue.text} for identifier, cue in zip(ids, batch)],
                                     ensure_ascii=False)}]}
         emit("status", f"正在翻译第 {start + 1}～{start + len(batch)} / {len(cues)} 条…")
-        response = transport(config, payload)
+        try:
+            response = transport(config, payload)
+        except Exception:
+            # A timeout/network error does not prove that the provider did not
+            # execute or bill the request. Keep that call explicitly unknown.
+            usage.add(None)
+            emit("usage", usage.summary())
+            emit("token_usage", replace(usage))
+            raise
         usage.add(response.get("usage"))
         emit("usage", usage.summary())
+        emit("token_usage", replace(usage))
         texts = parse_translation_response(response, ids)
         # Completed in-flight requests are retained even when cancellation was
         # requested during inference; no further batch is submitted.
