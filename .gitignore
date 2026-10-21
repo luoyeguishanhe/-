@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+releases/
 .pytest_cache/
 .idea/
 .vscode/

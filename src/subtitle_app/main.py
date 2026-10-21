@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QCloseEvent
+from PyQt6.QtGui import QCloseEvent, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -558,6 +558,8 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
+    if getattr(sys, "frozen", False):
+        app.setWindowIcon(QIcon(str(Path(sys._MEIPASS) / "app-icon.ico")))
     window = MainWindow()
     window.show()
     return app.exec()

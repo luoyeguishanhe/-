@@ -4,6 +4,8 @@
 
 ## 启动开发版
 
+已支持 Windows 64 位 EXE 便携包：完整解压后双击 `SubtitleApp.exe`，保留 `_internal` 和 `models` 文件夹；带 small 模型的版本可离线识别，无需安装 Python。打包配置及重新构建步骤见 [Windows 打包说明](docs/Windows打包.md)。成品 ZIP 单独交付，不提交 Git。
+
 需要 Python 3.11 或更新版本。在项目目录中运行：
 
 ```powershell

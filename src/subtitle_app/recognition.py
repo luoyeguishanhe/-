@@ -5,6 +5,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .runtime import model_source
+
 
 TRANSCRIBE_SETTINGS = {
     "beam_size": 5,
@@ -26,7 +28,7 @@ class WhisperRecognizer:
         cache.mkdir(parents=True, exist_ok=True)
         self.converter = OpenCC("t2s")
         self.model = WhisperModel(
-            model_size, device="cpu", compute_type="int8", cpu_threads=cpu_threads,
+            model_source(model_size), device="cpu", compute_type="int8", cpu_threads=cpu_threads,
             download_root=str(cache), local_files_only=local_files_only,
         )
 
