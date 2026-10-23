@@ -44,8 +44,12 @@ class AudioChunk:
 class SpeechSegmenter:
     """Turn consecutive 16 kHz mono chunks into speech spans with sample positions."""
 
-    def __init__(self, aggressiveness: int = 2) -> None:
+    def __init__(self, aggressiveness: int = 2, *,
+                 silence_frames: int = SILENCE_FRAMES,
+                 max_segment_frames: int = MAX_SEGMENT_FRAMES) -> None:
         self._vad = webrtcvad.Vad(aggressiveness)
+        self.silence_frames = silence_frames
+        self.max_segment_frames = max_segment_frames
         self._reset()
 
     def _reset(self) -> None:
@@ -105,7 +109,7 @@ class SpeechSegmenter:
             self._silent_frames = 0
         else:
             self._silent_frames += 1
-        if self._silent_frames >= SILENCE_FRAMES or len(self._frames) >= MAX_SEGMENT_FRAMES:
+        if self._silent_frames >= self.silence_frames or len(self._frames) >= self.max_segment_frames:
             return self._finish_active()
         return None
 
@@ -136,9 +140,11 @@ class SpeechSegmenter:
 class SpeechPipeline:
     """Keep model inference away from the capture and UI threads."""
 
-    def __init__(self, model_size: str = "small", language: str | None = None) -> None:
+    def __init__(self, model_size: str = "small", language: str | None = None,
+                 *, low_latency: bool = False) -> None:
         self.model_size = model_size
         self.language = language
+        self.low_latency = low_latency
         self.events: Queue[tuple[str, object]] = Queue()
         self._audio: Queue[AudioChunk] = Queue(maxsize=256)
         self._segments: Queue[SpeechSegment | None] = Queue(maxsize=12)
@@ -186,7 +192,8 @@ class SpeechPipeline:
             return None
 
     def _detect_speech(self) -> None:
-        segmenter = SpeechSegmenter()
+        segmenter = (SpeechSegmenter(silence_frames=30, max_segment_frames=250)
+                     if self.low_latency else SpeechSegmenter())
         was_speaking = False
         try:
             while not self._cancel.is_set():

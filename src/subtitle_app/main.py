@@ -31,6 +31,8 @@ from PyQt6.QtWidgets import (
 )
 
 from .audio_capture import SystemAudioRecorder, list_output_devices
+from .live_overlay import LiveSubtitleOverlay, LiveTranslationSettingsDialog
+from .live_subtitles import LiveSubtitleTranslator
 from .speech_pipeline import SpeechPipeline
 from .media_pipeline import MediaTranscriber
 from .runtime import default_capture_cache_directory, fallback_capture_cache_directory
@@ -118,6 +120,13 @@ class MainWindow(QMainWindow):
         self._close_requested = False
         self._editor = None
         self._editor_key = None
+        self.live_config = None
+        self.live_translator: LiveSubtitleTranslator | None = None
+        self.live_overlay: LiveSubtitleOverlay | None = None
+        self._live_mode = False
+        self._live_prompt_tokens = 0
+        self._live_completion_tokens = 0
+        self._live_unreported_calls = 0
 
         self.setStyleSheet(MAIN_STYLE)
         title = QLabel("字幕工坊")
@@ -152,7 +161,15 @@ class MainWindow(QMainWindow):
         self.advanced_toggle.setObjectName("advancedToggle")
 
         self.start_button = QPushButton("开始识别电脑声音")
-        self.start_button.clicked.connect(self.start_recording)
+        self.start_button.clicked.connect(lambda: self.start_recording())
+        self.live_button = QPushButton("开始直播翻译字幕")
+        self.live_button.setObjectName("primaryButton")
+        self.live_button.clicked.connect(self.start_live_subtitles)
+        self.live_settings_button = QPushButton("翻译服务设置…")
+        self.live_settings_button.clicked.connect(self.configure_live_translation)
+        self.show_overlay_button = QPushButton("显示字幕框")
+        self.show_overlay_button.clicked.connect(self.show_live_overlay)
+        self.show_overlay_button.setEnabled(False)
         self.stop_button = QPushButton("结束识别")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_recording)
@@ -203,6 +220,8 @@ class MainWindow(QMainWindow):
         self.status.setObjectName("statusText")
         self.asr_status = QLabel("选择视频开始；录制时音量条会随声音变化。")
         self.asr_status.setWordWrap(True)
+        self.live_usage = QLabel("")
+        self.live_usage.setWordWrap(True)
         self.transcript = QPlainTextEdit()
         self.transcript.setReadOnly(True)
         self.transcript.setPlaceholderText("字幕会显示在这里。\n\n选择本地视频可直接生成字幕；录制电脑声音适合网页视频或直播。")
@@ -228,14 +247,19 @@ class MainWindow(QMainWindow):
         source_layout.addWidget(self._hint("播放网页视频或直播时，选中它正在使用的输出设备。"))
         source_layout.addWidget(self._field_label("声音输出设备"))
         source_layout.addLayout(device_row)
+        source_layout.addWidget(self._field_label("原声语言"))
+        source_layout.addWidget(self.language_combo)
         source_layout.addWidget(self.start_button)
+        source_layout.addWidget(self.live_button)
+        live_row = QHBoxLayout()
+        live_row.addWidget(self.live_settings_button)
+        live_row.addWidget(self.show_overlay_button)
+        source_layout.addLayout(live_row)
         source_layout.addWidget(self.stop_button)
         source_layout.addWidget(self.keep_recording)
         source_layout.addWidget(self._hint("临时录音会自动删除；字幕可另存。"))
         source_layout.addWidget(self.level_bar)
         source_layout.addSpacing(8)
-        source_layout.addWidget(self._field_label("原声语言"))
-        source_layout.addWidget(self.language_combo)
 
         advanced = QWidget()
         advanced.setObjectName("advancedPanel")
@@ -306,6 +330,7 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self.file_progress)
         status_layout.addWidget(self.status)
         status_layout.addWidget(self.asr_status)
+        status_layout.addWidget(self.live_usage)
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -378,8 +403,35 @@ class MainWindow(QMainWindow):
         else:
             self.status.setText("没有找到 WASAPI 系统输出设备，请检查 Windows 音频设备。")
         self.start_button.setEnabled(bool(available) and self.pipeline is None and self.file_job is None)
+        self.live_button.setEnabled(bool(available) and self.pipeline is None and self.file_job is None)
+
+    def configure_live_translation(self) -> bool:
+        dialog = LiveTranslationSettingsDialog(self.live_config, self)
+        accepted = dialog.exec() == dialog.DialogCode.Accepted
+        if accepted:
+            self.live_config = dialog.config
+        dialog.deleteLater()
+        return accepted
+
+    def start_live_subtitles(self) -> None:
+        if self.pipeline is not None or self.file_job is not None or self.recorder.is_active:
+            return
+        if self.live_config is None and not self.configure_live_translation():
+            return
+        self.start_recording(live=True)
+
+    def show_live_overlay(self) -> None:
+        if self.live_overlay is not None:
+            self.live_overlay.show_overlay()
 
     def _reset_results(self, source: Path) -> bool:
+        if self.live_translator is not None:
+            self.live_translator.cancel()
+            self.live_translator = None
+        if self.live_overlay is not None:
+            self.live_overlay.hide()
+        self._live_mode = False
+        self.live_usage.clear()
         self.tools_button.setEnabled(False)
         self.edit_button.setEnabled(False)
         if self._editor is not None:
@@ -429,6 +481,7 @@ class MainWindow(QMainWindow):
         self.keep_recording.setEnabled(False)
         self.cache_button.setEnabled(False)
         self.start_button.setEnabled(False)
+        self.live_button.setEnabled(False)
         self.video_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.stop_button.setText("取消处理")
@@ -442,7 +495,7 @@ class MainWindow(QMainWindow):
         self.file_job = MediaTranscriber(source, str(self.model_combo.currentData()), self.language_combo.currentData())
         self.file_job.start()
 
-    def start_recording(self) -> None:
+    def start_recording(self, *, live: bool = False) -> None:
         if self.pipeline is not None or self.file_job is not None or self.recorder.is_active:
             return
         device_index = self.devices.currentData()
@@ -451,7 +504,7 @@ class MainWindow(QMainWindow):
         if not self._confirm_unsaved("开始新的录音并清空这些文字"):
             return
         suggested = f"system-audio-{datetime.now():%Y%m%d-%H%M%S}.wav"
-        temporary = not self.keep_recording.isChecked()
+        temporary = live or not self.keep_recording.isChecked()
         capture_cache = None
         if temporary:
             root = Path(self.cache_path.text()).expanduser()
@@ -496,7 +549,23 @@ class MainWindow(QMainWindow):
             if temporary else "识别完成后将自动保存 TXT 和 SRT；也可以另存到其他位置。")
         self.transcript.clear()
         model_size = str(self.model_combo.currentData())
-        self.pipeline = SpeechPipeline(model_size, self.language_combo.currentData())
+        self.pipeline = SpeechPipeline(model_size, self.language_combo.currentData(), low_latency=live)
+        self._live_mode = live
+        if live:
+            self._live_prompt_tokens = 0
+            self._live_completion_tokens = 0
+            self._live_unreported_calls = 0
+            self.live_usage.setText("直播翻译用量：等待接口返回")
+            if self.live_translator is not None:
+                self.live_translator.cancel()
+            self.live_translator = LiveSubtitleTranslator(self.live_config)
+            self.live_translator.start()
+            if self.live_overlay is None:
+                self.live_overlay = LiveSubtitleOverlay()
+            self.live_overlay.original.setText("")
+            self.live_overlay.translated.setText("等待语音…")
+            self.live_overlay.show_overlay()
+            self.show_overlay_button.setEnabled(True)
         self.devices.setEnabled(False)
         self.refresh_button.setEnabled(False)
         self.model_combo.setEnabled(False)
@@ -504,6 +573,7 @@ class MainWindow(QMainWindow):
         self.keep_recording.setEnabled(False)
         self.cache_button.setEnabled(False)
         self.start_button.setEnabled(False)
+        self.live_button.setEnabled(False)
         self.video_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.stop_button.setText("取消")
@@ -534,6 +604,7 @@ class MainWindow(QMainWindow):
             self._recording_finished()
 
     def update_recording_state(self) -> None:
+        self._poll_live_translation()
         self.level_bar.setValue(self.recorder.level)
         while (event := self.recorder.next_event()) is not None:
             kind, value = event
@@ -650,6 +721,37 @@ class MainWindow(QMainWindow):
                     break
         if self.pipeline is None and self.file_job is None and not self.recorder.is_active and self.devices.count() and not self._close_requested:
             self.start_button.setEnabled(True)
+            self.live_button.setEnabled(True)
+
+    def _poll_live_translation(self) -> None:
+        worker = self.live_translator
+        if worker is None:
+            return
+        while (event := worker.next_event()) is not None:
+            kind, value = event
+            if kind == "queued" and self.live_overlay is not None:
+                _, original = value
+                self.live_overlay.show_pending(original)
+            elif kind == "translated" and self.live_overlay is not None:
+                _, original, translated = value
+                self.live_overlay.show_translation(original, translated)
+            elif kind == "warning":
+                self._session_has_warnings = True
+                self.asr_status.setText(str(value))
+            elif kind == "token_usage":
+                self._live_prompt_tokens += value.prompt_tokens
+                self._live_completion_tokens += value.completion_tokens
+                self._live_unreported_calls += value.unreported_calls
+                self.live_usage.setText(
+                    f"直播翻译用量：输入 {self._live_prompt_tokens} token，"
+                    f"输出 {self._live_completion_tokens} token"
+                    + (f"；{self._live_unreported_calls} 次调用未返回用量" if self._live_unreported_calls else ""))
+            elif kind == "error":
+                self.asr_status.setText(f"直播翻译失败：{value}")
+                if self.live_overlay is not None:
+                    self.live_overlay.show_error(f"翻译失败：{value}")
+            elif kind == "complete":
+                self.live_translator = None
 
     def _receive_text(self, value) -> None:
         segment, transcript, language = value
@@ -658,8 +760,16 @@ class MainWindow(QMainWindow):
             f"[{segment.start_seconds:.1f}～{segment.end_seconds:.1f} 秒] {transcript}"
         )
         self.asr_status.setText(f"识别到 {language} 语音。")
+        if self._live_mode and self.file_job is None and self.live_translator is not None:
+            self.live_translator.submit(SubtitleCue(segment.start_seconds, segment.end_seconds, transcript))
 
     def _recording_finished(self, completed: bool = False) -> None:
+        if self.live_translator is not None:
+            if completed:
+                self.live_translator.finish()
+            else:
+                self.live_translator.cancel()
+        self._live_mode = False
         self.tools_button.setEnabled(True)
         self.devices.setEnabled(True)
         self.refresh_button.setEnabled(True)
@@ -668,6 +778,7 @@ class MainWindow(QMainWindow):
         self.keep_recording.setEnabled(True)
         self.cache_button.setEnabled(True)
         self.start_button.setEnabled(False)
+        self.live_button.setEnabled(False)
         self.video_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.stop_button.setText("结束识别")
@@ -808,6 +919,10 @@ class MainWindow(QMainWindow):
             self._cleanup_capture_cache()
         except OSError as exc:
             QMessageBox.warning(self, "缓存清理失败", f"临时录音未能删除，请稍后手动清理：{exc}")
+        if self.live_translator is not None:
+            self.live_translator.cancel()
+        if self.live_overlay is not None:
+            self.live_overlay.dispose()
         super().closeEvent(event)
 
 
