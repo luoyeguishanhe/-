@@ -3,17 +3,20 @@
 from datetime import datetime
 from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import QSettings, QStandardPaths, QTimer, QUrl, Qt
 from PyQt6.QtGui import QCloseEvent, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -30,6 +33,7 @@ from PyQt6.QtWidgets import (
 from .audio_capture import SystemAudioRecorder, list_output_devices
 from .speech_pipeline import SpeechPipeline
 from .media_pipeline import MediaTranscriber
+from .runtime import default_capture_cache_directory, fallback_capture_cache_directory
 from .subtitle_editor import SubtitleEditor
 from .subtitle_tools import SubtitleToolsDialog
 from .subtitles import SubtitleCue, render_srt, render_txt, save_new_exports, write_export
@@ -52,11 +56,11 @@ QLabel#hint { color: #70839b; font-size: 11px; }
 QLabel#exportStatus { color: #60738c; font-size: 11px; }
 QLabel#statusText { font-weight: 600; }
 QScrollArea { background: transparent; border: none; }
-QComboBox, QDoubleSpinBox, QPlainTextEdit {
+QComboBox, QDoubleSpinBox, QLineEdit, QPlainTextEdit {
     background: #ffffff; border: 1px solid #cbd9e7; border-radius: 7px;
     padding: 7px 9px; selection-background-color: #3168c9;
 }
-QComboBox:focus, QDoubleSpinBox:focus, QPlainTextEdit:focus {
+QComboBox:focus, QDoubleSpinBox:focus, QLineEdit:focus, QPlainTextEdit:focus {
     border: 2px solid #3168c9;
 }
 QComboBox, QDoubleSpinBox { min-height: 22px; }
@@ -104,6 +108,8 @@ class MainWindow(QMainWindow):
         self.pending_device_index: int | None = None
         self.recording_saved = False
         self.session_audio_path: Path | None = None
+        self._capture_cache: TemporaryDirectory | None = None
+        self._temporary_recording = False
         self.paragraphs: list[str] = []
         self.subtitle_cues: list[SubtitleCue] = []
         self._exports_saved = False
@@ -145,14 +151,23 @@ class MainWindow(QMainWindow):
         self.advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.advanced_toggle.setObjectName("advancedToggle")
 
-        self.start_button = QPushButton("开始录制电脑声音")
+        self.start_button = QPushButton("开始识别电脑声音")
         self.start_button.clicked.connect(self.start_recording)
-        self.stop_button = QPushButton("停止并保存")
+        self.stop_button = QPushButton("结束识别")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_recording)
         self.video_button = QPushButton("选择视频并生成字幕")
         self.video_button.clicked.connect(self.start_video)
         self.video_button.setObjectName("primaryButton")
+        self.keep_recording = QCheckBox("保留录音 WAV 并自动保存字幕")
+        self.keep_recording.setToolTip("勾选后在开始时选择录音保存位置；未勾选时使用临时缓存。")
+        self.settings = QSettings("SubtitleApp", "SubtitleApp")
+        self.cache_path = QLineEdit()
+        self.cache_path.setReadOnly(True)
+        self.cache_path.setText(str(self.settings.value(
+            "capture_cache_dir", str(default_capture_cache_directory()))))
+        self.cache_button = QPushButton("更改…")
+        self.cache_button.clicked.connect(self.choose_cache_directory)
         self.tools_button = QPushButton("翻译与封装…")
         self.tools_button.clicked.connect(self.open_subtitle_tools)
 
@@ -171,7 +186,7 @@ class MainWindow(QMainWindow):
         self.subtitle_offset.setSingleStep(0.1)
         self.subtitle_offset.setToolTip("0 表示与当前源文件同步；正数让字幕延后，负数让字幕提前。调整后重新导出 SRT。")
         self.subtitle_offset.valueChanged.connect(self._offset_changed)
-        self.export_status = QLabel("完成后自动在源文件旁保存文字和字幕。")
+        self.export_status = QLabel("本地视频会自动保存字幕；电脑声音识别可在结束后手动导出。")
         self.export_status.setWordWrap(True)
         self.export_status.setObjectName("exportStatus")
 
@@ -204,19 +219,21 @@ class MainWindow(QMainWindow):
         source_panel.setObjectName("sourcePanel")
         source_layout = QVBoxLayout(source_panel)
         source_layout.setContentsMargins(22, 22, 22, 22)
-        source_layout.setSpacing(10)
+        source_layout.setSpacing(7)
         source_layout.addWidget(self._section_title("从本地视频开始"))
         source_layout.addWidget(self._hint("直接读取视频音轨，完成后自动保存字幕。"))
         source_layout.addWidget(self.video_button)
-        source_layout.addSpacing(18)
+        source_layout.addSpacing(10)
         source_layout.addWidget(self._section_title("录制电脑声音"))
         source_layout.addWidget(self._hint("播放网页视频或直播时，选中它正在使用的输出设备。"))
         source_layout.addWidget(self._field_label("声音输出设备"))
         source_layout.addLayout(device_row)
         source_layout.addWidget(self.start_button)
         source_layout.addWidget(self.stop_button)
+        source_layout.addWidget(self.keep_recording)
+        source_layout.addWidget(self._hint("临时录音会自动删除；字幕可另存。"))
         source_layout.addWidget(self.level_bar)
-        source_layout.addSpacing(16)
+        source_layout.addSpacing(8)
         source_layout.addWidget(self._field_label("原声语言"))
         source_layout.addWidget(self.language_combo)
 
@@ -231,6 +248,12 @@ class MainWindow(QMainWindow):
         advanced_layout.addWidget(self._field_label("字幕时间偏移（秒）"))
         advanced_layout.addWidget(self.subtitle_offset)
         advanced_layout.addWidget(self._hint("正数延后，负数提前；调整后重新导出字幕。"))
+        advanced_layout.addWidget(self._field_label("录音缓存目录"))
+        cache_row = QHBoxLayout()
+        cache_row.addWidget(self.cache_path, 1)
+        cache_row.addWidget(self.cache_button)
+        advanced_layout.addLayout(cache_row)
+        advanced_layout.addWidget(self._hint("每次录音使用独立文件夹；不会清理目录中的其他文件。"))
         advanced.setVisible(False)
         self.advanced_toggle.toggled.connect(advanced.setVisible)
         self.advanced_toggle.toggled.connect(
@@ -318,6 +341,23 @@ class MainWindow(QMainWindow):
         label.setWordWrap(True)
         return label
 
+    def choose_cache_directory(self) -> None:
+        chosen = QFileDialog.getExistingDirectory(self, "选择录音缓存目录", self.cache_path.text())
+        if chosen:
+            path = Path(chosen).resolve()
+            self.cache_path.setText(str(path))
+            self.settings.setValue("capture_cache_dir", str(path))
+
+    def _cleanup_capture_cache(self) -> None:
+        if self._capture_cache is None:
+            return
+        if self._editor is not None:
+            self._editor.player.stop()
+            self._editor.player.setSource(QUrl())
+        self._capture_cache.cleanup()
+        self._capture_cache = None
+        self._temporary_recording = False
+
     def refresh_devices(self) -> None:
         self.devices.clear()
         try:
@@ -339,13 +379,20 @@ class MainWindow(QMainWindow):
             self.status.setText("没有找到 WASAPI 系统输出设备，请检查 Windows 音频设备。")
         self.start_button.setEnabled(bool(available) and self.pipeline is None and self.file_job is None)
 
-    def _reset_results(self, source: Path) -> None:
+    def _reset_results(self, source: Path) -> bool:
         self.tools_button.setEnabled(False)
         self.edit_button.setEnabled(False)
         if self._editor is not None:
+            self._editor.player.stop()
+            self._editor.player.setSource(QUrl())
             self._editor.deleteLater()
         self._editor = None
         self._editor_key = None
+        try:
+            self._cleanup_capture_cache()
+        except OSError as exc:
+            QMessageBox.warning(self, "缓存清理失败", f"无法删除上次录音的缓存：{exc}")
+            return False
         self.session_audio_path = source
         self.recording_saved = False
         self.paragraphs.clear()
@@ -356,6 +403,7 @@ class MainWindow(QMainWindow):
         self.save_txt_button.setEnabled(False)
         self.export_srt_button.setEnabled(False)
         self.transcript.clear()
+        return True
 
     def start_video(self) -> None:
         if self.pipeline is not None or self.file_job is not None or self.recorder.is_active:
@@ -369,7 +417,8 @@ class MainWindow(QMainWindow):
         if not filename:
             return
         source = Path(filename)
-        self._reset_results(source)
+        if not self._reset_results(source):
+            return
         self.subtitle_offset.setValue(0)
         self.output_path = None
         self.pending_device_index = None
@@ -377,6 +426,8 @@ class MainWindow(QMainWindow):
         self.refresh_button.setEnabled(False)
         self.model_combo.setEnabled(False)
         self.language_combo.setEnabled(False)
+        self.keep_recording.setEnabled(False)
+        self.cache_button.setEnabled(False)
         self.start_button.setEnabled(False)
         self.video_button.setEnabled(False)
         self.stop_button.setEnabled(True)
@@ -400,19 +451,49 @@ class MainWindow(QMainWindow):
         if not self._confirm_unsaved("开始新的录音并清空这些文字"):
             return
         suggested = f"system-audio-{datetime.now():%Y%m%d-%H%M%S}.wav"
-        filename, _ = QFileDialog.getSaveFileName(
-            self, "保存系统录音", suggested, "WAV 音频 (*.wav)"
-        )
-        if not filename:
+        temporary = not self.keep_recording.isChecked()
+        capture_cache = None
+        if temporary:
+            root = Path(self.cache_path.text()).expanduser()
+            try:
+                root.mkdir(parents=True, exist_ok=True)
+                capture_cache = TemporaryDirectory(prefix="session-", dir=root)
+            except OSError as exc:
+                if root != default_capture_cache_directory():
+                    QMessageBox.warning(self, "缓存不可用", f"无法在所选目录创建录音缓存：{exc}")
+                    return
+                root = fallback_capture_cache_directory()
+                try:
+                    root.mkdir(parents=True, exist_ok=True)
+                    capture_cache = TemporaryDirectory(prefix="session-", dir=root)
+                except OSError as fallback_exc:
+                    QMessageBox.warning(self, "缓存不可用", f"无法创建录音缓存：{fallback_exc}")
+                    return
+                self.cache_path.setText(str(root))
+                self.status.setText(f"程序目录不可写，录音缓存改用：{root}")
+            output_path = Path(capture_cache.name) / suggested
+        else:
+            filename, _ = QFileDialog.getSaveFileName(
+                self, "保存系统录音", suggested, "WAV 音频 (*.wav)"
+            )
+            if not filename:
+                return
+            output_path = Path(filename)
+            if output_path.suffix.lower() != ".wav":
+                output_path = output_path.with_suffix(".wav")
+        if not self._reset_results(output_path):
+            if capture_cache is not None:
+                capture_cache.cleanup()
             return
-        self.output_path = Path(filename)
-        if self.output_path.suffix.lower() != ".wav":
-            self.output_path = self.output_path.with_suffix(".wav")
+        self._capture_cache = capture_cache
+        self._temporary_recording = temporary
+        self.output_path = output_path
         self.pending_device_index = int(device_index)
-        self._reset_results(self.output_path)
         self.level_bar.setVisible(True)
         self.file_progress.setVisible(False)
-        self.export_status.setText("识别完成后将自动保存 TXT 和 SRT；也可以另存到其他位置。")
+        self.export_status.setText(
+            "识别后可手动导出 TXT 或 SRT；临时录音供本次校对使用。"
+            if temporary else "识别完成后将自动保存 TXT 和 SRT；也可以另存到其他位置。")
         self.transcript.clear()
         model_size = str(self.model_combo.currentData())
         self.pipeline = SpeechPipeline(model_size, self.language_combo.currentData())
@@ -420,6 +501,8 @@ class MainWindow(QMainWindow):
         self.refresh_button.setEnabled(False)
         self.model_combo.setEnabled(False)
         self.language_combo.setEnabled(False)
+        self.keep_recording.setEnabled(False)
+        self.cache_button.setEnabled(False)
         self.start_button.setEnabled(False)
         self.video_button.setEnabled(False)
         self.stop_button.setEnabled(True)
@@ -439,7 +522,7 @@ class MainWindow(QMainWindow):
         if self.recorder.is_active:
             self.recorder.stop()
             self.stop_button.setEnabled(False)
-            self.status.setText("正在保存 WAV 文件…")
+            self.status.setText("正在结束录音…" if self._temporary_recording else "正在保存 WAV 文件…")
         else:
             if self._capture_started:
                 self.stop_button.setEnabled(False)
@@ -458,7 +541,9 @@ class MainWindow(QMainWindow):
                 self.status.setText(f"正在录制：{value}")
             elif kind == "saved":
                 duration = self.recorder.frames_written / self.recorder.sample_rate
-                self.status.setText(f"已保存 {duration:.1f} 秒录音：{value}")
+                self.status.setText(
+                    f"已缓存 {duration:.1f} 秒录音，正在完成识别…"
+                    if self._temporary_recording else f"已保存 {duration:.1f} 秒录音：{value}")
                 self.recording_saved = True
                 if self.pipeline is not None:
                     self.pipeline.finish_capture()
@@ -532,7 +617,7 @@ class MainWindow(QMainWindow):
                             on_audio=pipeline.submit,
                         )
                         self._capture_started = True
-                        self.stop_button.setText("停止并保存")
+                        self.stop_button.setText("结束识别" if self._temporary_recording else "停止并保存")
                         self.status.setText("正在打开录音设备…")
                         self.asr_status.setText("模型已就绪，等待语音。")
                     except Exception as exc:
@@ -580,16 +665,22 @@ class MainWindow(QMainWindow):
         self.refresh_button.setEnabled(True)
         self.model_combo.setEnabled(True)
         self.language_combo.setEnabled(True)
+        self.keep_recording.setEnabled(True)
+        self.cache_button.setEnabled(True)
         self.start_button.setEnabled(False)
         self.video_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-        self.stop_button.setText("停止并保存")
+        self.stop_button.setText("结束识别")
         self.output_path = None
         self.pending_device_index = None
         self.pipeline = None
         self.file_job = None
         self._capture_started = False
-        if self.paragraphs and self.session_audio_path is not None and not self._exports_saved:
+        if self._temporary_recording and self.paragraphs:
+            self.export_status.setText(
+                "识别结果仅保留在本次窗口中。需要字幕请点击“导出 SRT”或“保存 TXT”；"
+                "临时录音在关闭程序或开始下次任务时删除。")
+        elif self.paragraphs and self.session_audio_path is not None and not self._exports_saved:
             try:
                 paths = save_new_exports(
                     self.session_audio_path, render_txt(self.paragraphs),
@@ -633,7 +724,7 @@ class MainWindow(QMainWindow):
         if self.pipeline is not None or self.file_job is not None or self.recorder.is_active:
             return
         from .subtitle_editor import preview_cues
-        dialog = SubtitleToolsDialog(self.session_audio_path,
+        dialog = SubtitleToolsDialog(None if self._temporary_recording else self.session_audio_path,
                                      preview_cues(self.subtitle_cues, self.subtitle_offset.value()), self)
         dialog.exec()
         dialog.deleteLater()
@@ -645,7 +736,11 @@ class MainWindow(QMainWindow):
             content = render_txt(self.paragraphs) if kind == "txt" else render_srt(self.subtitle_cues, self.subtitle_offset.value())
             if not content:
                 raise ValueError("没有可导出的内容，请检查字幕偏移或等待识别完成")
-            suggested = (self.session_audio_path or Path("transcript.wav")).with_suffix("." + kind)
+            if self._temporary_recording and self.session_audio_path is not None:
+                documents = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)
+                suggested = Path(documents or str(Path.home())) / self.session_audio_path.with_suffix("." + kind).name
+            else:
+                suggested = (self.session_audio_path or Path("transcript.wav")).with_suffix("." + kind)
             title = "保存识别文字" if kind == "txt" else "导出 SRT 字幕"
             name_filter = "文本文件 (*.txt)" if kind == "txt" else "SRT 字幕 (*.srt)"
             filename, _ = QFileDialog.getSaveFileName(
@@ -709,6 +804,10 @@ class MainWindow(QMainWindow):
             self._close_requested = False
             event.ignore()
             return
+        try:
+            self._cleanup_capture_cache()
+        except OSError as exc:
+            QMessageBox.warning(self, "缓存清理失败", f"临时录音未能删除，请稍后手动清理：{exc}")
         super().closeEvent(event)
 
 

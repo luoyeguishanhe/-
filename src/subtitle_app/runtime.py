@@ -17,6 +17,16 @@ def model_source(model_size: str) -> str:
     return model_size
 
 
+def default_capture_cache_directory() -> Path:
+    """Keep portable captures beside the app, with a writable fallback available."""
+    base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2]
+    return base / "cache"
+
+
+def fallback_capture_cache_directory() -> Path:
+    return Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "SubtitleApp" / "cache"
+
+
 def configure_windowed_runtime() -> Path:
     # The EXE may be on a read-only drive; logs belong in the user's data folder.
     base = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "SubtitleApp" / "logs"

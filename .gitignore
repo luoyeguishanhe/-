@@ -12,6 +12,7 @@ releases/
 user_settings.json
 transcripts/
 models/
+cache/
 *.wav
 benchmark.local.json
 benchmark-data/
