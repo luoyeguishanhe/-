@@ -4,13 +4,14 @@ from datetime import datetime
 from pathlib import Path
 import sys
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QCloseEvent, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -18,6 +19,10 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -30,11 +35,68 @@ from .subtitle_tools import SubtitleToolsDialog
 from .subtitles import SubtitleCue, render_srt, render_txt, save_new_exports, write_export
 
 
+MAIN_STYLE = """
+QMainWindow, QMainWindow > QWidget { background: #edf3f8; color: #21334d; }
+QWidget { font-family: 'Microsoft YaHei UI', 'Segoe UI'; font-size: 13px; color: #21334d; }
+QLabel#appTitle { font-size: 27px; font-weight: 700; color: #183457; }
+QLabel#appDescription { color: #62758c; font-size: 12px; }
+QFrame#sourcePanel, QFrame#resultPanel {
+    background: #ffffff; border: 1px solid #d9e4ee; border-radius: 12px;
+}
+QFrame#statusPanel {
+    background: #e3edf6; border: 1px solid #d2e2ef; border-radius: 9px;
+}
+QLabel#sectionTitle { font-size: 17px; font-weight: 700; color: #203b5d; }
+QLabel#fieldLabel { font-weight: 600; color: #405673; }
+QLabel#hint { color: #70839b; font-size: 11px; }
+QLabel#exportStatus { color: #60738c; font-size: 11px; }
+QLabel#statusText { font-weight: 600; }
+QScrollArea { background: transparent; border: none; }
+QComboBox, QDoubleSpinBox, QPlainTextEdit {
+    background: #ffffff; border: 1px solid #cbd9e7; border-radius: 7px;
+    padding: 7px 9px; selection-background-color: #3168c9;
+}
+QComboBox:focus, QDoubleSpinBox:focus, QPlainTextEdit:focus {
+    border: 2px solid #3168c9;
+}
+QComboBox, QDoubleSpinBox { min-height: 22px; }
+QPlainTextEdit#transcript {
+    background: #f8fbfe; border-color: #e0e9f2; font-size: 14px;
+    line-height: 145%; padding: 15px;
+}
+QPushButton {
+    background: #f4f7fb; color: #24466d; border: 1px solid #ccdaea;
+    border-radius: 7px; padding: 8px 14px; min-height: 23px; font-weight: 600;
+}
+QPushButton:hover { background: #e6eff9; border-color: #8eb0d9; }
+QPushButton:focus { border: 2px solid #3168c9; }
+QPushButton:disabled { color: #9aaabe; background: #f4f7fa; border-color: #e3eaf1; }
+QPushButton#primaryButton {
+    background: #3168c9; color: #ffffff; border-color: #3168c9;
+    padding-top: 12px; padding-bottom: 12px;
+}
+QPushButton#primaryButton:hover { background: #2457af; }
+QPushButton#primaryButton:disabled { background: #aabedb; border-color: #aabedb; color: #eef4fb; }
+QToolButton#advancedToggle {
+    border: none; background: transparent; color: #3168c9;
+    font-weight: 600; padding: 7px 0; text-align: left;
+}
+QToolButton#advancedToggle:hover { color: #1e4e9a; }
+QProgressBar {
+    background: #dce8f3; border: none; border-radius: 5px;
+    min-height: 13px; text-align: center; color: #203b5d;
+}
+QProgressBar::chunk { background: #4b8ad6; border-radius: 5px; }
+QSplitter::handle { background: transparent; width: 8px; }
+"""
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("实时中文字幕 · 开发版")
-        self.resize(820, 680)
+        self.setWindowTitle("字幕工坊")
+        self.resize(1100, 730)
+        self.setMinimumSize(860, 590)
         self.recorder = SystemAudioRecorder()
         self.pipeline: SpeechPipeline | None = None
         self.file_job: MediaTranscriber | None = None
@@ -51,13 +113,16 @@ class MainWindow(QMainWindow):
         self._editor = None
         self._editor_key = None
 
-        title = QLabel("语音识别与字幕")
-        title.setStyleSheet("font-size: 24px; font-weight: 600;")
-        description = QLabel("可录制系统声音，或直接选择本地视频生成 TXT 和 SRT 字幕。")
-        description.setWordWrap(True)
+        self.setStyleSheet(MAIN_STYLE)
+        title = QLabel("字幕工坊")
+        title.setObjectName("appTitle")
+        description = QLabel("把视频或电脑声音变成可编辑、可翻译的字幕")
+        description.setObjectName("appDescription")
 
         self.devices = QComboBox()
-        self.refresh_button = QPushButton("刷新设备")
+        self.devices.setMinimumWidth(0)
+        self.devices.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.refresh_button = QPushButton("刷新")
         self.refresh_button.clicked.connect(self.refresh_devices)
         device_row = QHBoxLayout()
         device_row.addWidget(self.devices, 1)
@@ -73,26 +138,23 @@ class MainWindow(QMainWindow):
         self.language_combo.addItem("英语", "en")
         self.language_combo.addItem("日语", "ja")
         self.language_combo.addItem("韩语", "ko")
-        recognition_row = QHBoxLayout()
-        recognition_row.addWidget(QLabel("识别模型"))
-        recognition_row.addWidget(self.model_combo, 1)
-        recognition_row.addWidget(QLabel("原声语言"))
-        recognition_row.addWidget(self.language_combo, 1)
+        self.advanced_toggle = QToolButton()
+        self.advanced_toggle.setText("更多设置")
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.advanced_toggle.setObjectName("advancedToggle")
 
-        self.start_button = QPushButton("开始录音与识别")
+        self.start_button = QPushButton("开始录制电脑声音")
         self.start_button.clicked.connect(self.start_recording)
         self.stop_button = QPushButton("停止并保存")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_recording)
-        self.video_button = QPushButton("选择本地视频…")
+        self.video_button = QPushButton("选择视频并生成字幕")
         self.video_button.clicked.connect(self.start_video)
-        button_row = QHBoxLayout()
-        button_row.addWidget(self.video_button)
-        button_row.addWidget(self.start_button)
-        button_row.addWidget(self.stop_button)
+        self.video_button.setObjectName("primaryButton")
         self.tools_button = QPushButton("翻译与封装…")
         self.tools_button.clicked.connect(self.open_subtitle_tools)
-        button_row.addWidget(self.tools_button)
 
         self.save_txt_button = QPushButton("保存 TXT…")
         self.save_txt_button.clicked.connect(lambda: self.export_text("txt"))
@@ -109,15 +171,9 @@ class MainWindow(QMainWindow):
         self.subtitle_offset.setSingleStep(0.1)
         self.subtitle_offset.setToolTip("0 表示与当前源文件同步；正数让字幕延后，负数让字幕提前。调整后重新导出 SRT。")
         self.subtitle_offset.valueChanged.connect(self._offset_changed)
-        export_row = QHBoxLayout()
-        export_row.addWidget(self.save_txt_button)
-        export_row.addWidget(self.export_srt_button)
-        export_row.addWidget(self.edit_button)
-        export_row.addStretch()
-        export_row.addWidget(QLabel("字幕偏移（秒）"))
-        export_row.addWidget(self.subtitle_offset)
-        self.export_status = QLabel("完成识别后，自动在录音或视频旁保存 TXT 和 SRT；也可以另存到其他位置。")
+        self.export_status = QLabel("完成后自动在源文件旁保存文字和字幕。")
         self.export_status.setWordWrap(True)
+        self.export_status.setObjectName("exportStatus")
 
         self.level_bar = QProgressBar()
         self.level_bar.setRange(0, 100)
@@ -127,33 +183,114 @@ class MainWindow(QMainWindow):
         self.file_progress.setRange(0, 1000)
         self.file_progress.setValue(0)
         self.file_progress.setVisible(False)
-        self.status = QLabel("准备就绪。音量条跳动表示已采集到声音。")
+        self.status = QLabel("准备就绪")
         self.status.setWordWrap(True)
-        self.asr_status = QLabel("语音识别尚未启动。首次运行需下载本地模型。")
+        self.status.setObjectName("statusText")
+        self.asr_status = QLabel("选择视频开始；录制时音量条会随声音变化。")
         self.asr_status.setWordWrap(True)
         self.transcript = QPlainTextEdit()
         self.transcript.setReadOnly(True)
-        self.transcript.setPlaceholderText("检测到语音后，识别文字会显示在这里。")
+        self.transcript.setPlaceholderText("字幕会显示在这里。\n\n选择本地视频可直接生成字幕；录制电脑声音适合网页视频或直播。")
+        self.transcript.setObjectName("transcript")
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(32, 32, 32, 32)
-        layout.setSpacing(12)
-        layout.addWidget(title)
-        layout.addWidget(description)
-        layout.addLayout(device_row)
-        layout.addLayout(recognition_row)
-        layout.addLayout(button_row)
-        layout.addLayout(export_row)
-        layout.addWidget(self.export_status)
-        layout.addWidget(self.level_bar)
-        layout.addWidget(self.file_progress)
-        layout.addWidget(self.status)
-        layout.addWidget(self.asr_status)
-        layout.addWidget(self.transcript, 1)
-        layout.addStretch()
+        header = QWidget()
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(2)
+        header_layout.addWidget(title)
+        header_layout.addWidget(description)
+
+        source_panel = QFrame()
+        source_panel.setObjectName("sourcePanel")
+        source_layout = QVBoxLayout(source_panel)
+        source_layout.setContentsMargins(22, 22, 22, 22)
+        source_layout.setSpacing(10)
+        source_layout.addWidget(self._section_title("从本地视频开始"))
+        source_layout.addWidget(self._hint("直接读取视频音轨，完成后自动保存字幕。"))
+        source_layout.addWidget(self.video_button)
+        source_layout.addSpacing(18)
+        source_layout.addWidget(self._section_title("录制电脑声音"))
+        source_layout.addWidget(self._hint("播放网页视频或直播时，选中它正在使用的输出设备。"))
+        source_layout.addWidget(self._field_label("声音输出设备"))
+        source_layout.addLayout(device_row)
+        source_layout.addWidget(self.start_button)
+        source_layout.addWidget(self.stop_button)
+        source_layout.addWidget(self.level_bar)
+        source_layout.addSpacing(16)
+        source_layout.addWidget(self._field_label("原声语言"))
+        source_layout.addWidget(self.language_combo)
+
+        advanced = QWidget()
+        advanced.setObjectName("advancedPanel")
+        advanced_layout = QVBoxLayout(advanced)
+        advanced_layout.setContentsMargins(0, 4, 0, 0)
+        advanced_layout.setSpacing(8)
+        advanced_layout.addWidget(self._field_label("识别模型"))
+        advanced_layout.addWidget(self.model_combo)
+        advanced_layout.addWidget(self._hint("默认 small；较大模型需要更多时间。"))
+        advanced_layout.addWidget(self._field_label("字幕时间偏移（秒）"))
+        advanced_layout.addWidget(self.subtitle_offset)
+        advanced_layout.addWidget(self._hint("正数延后，负数提前；调整后重新导出字幕。"))
+        advanced.setVisible(False)
+        self.advanced_toggle.toggled.connect(advanced.setVisible)
+        self.advanced_toggle.toggled.connect(
+            lambda checked: self.advanced_toggle.setArrowType(
+                Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow))
+        source_layout.addWidget(self.advanced_toggle)
+        source_layout.addWidget(advanced)
+        source_layout.addStretch()
+
+        source_scroll = QScrollArea()
+        source_scroll.setWidgetResizable(True)
+        source_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        source_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        source_scroll.setWidget(source_panel)
+        source_scroll.setMinimumWidth(310)
+
+        result_panel = QFrame()
+        result_panel.setObjectName("resultPanel")
+        result_layout = QVBoxLayout(result_panel)
+        result_layout.setContentsMargins(26, 20, 26, 22)
+        result_layout.setSpacing(12)
+        result_header = QHBoxLayout()
+        result_header.addWidget(self._section_title("识别结果"))
+        result_header.addStretch()
+        result_header.addWidget(self.edit_button)
+        result_layout.addLayout(result_header)
+        result_layout.addWidget(self.transcript, 1)
+        export_row = QHBoxLayout()
+        export_row.addWidget(self.export_srt_button)
+        export_row.addWidget(self.save_txt_button)
+        export_row.addStretch()
+        result_layout.addLayout(export_row)
+        result_layout.addWidget(self.export_status)
+        result_layout.addSpacing(6)
+        result_layout.addWidget(self.tools_button)
+        result_layout.addWidget(self._hint("也可导入已有 SRT，再翻译或封装到视频中。"))
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(source_scroll)
+        splitter.addWidget(result_panel)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([340, 690])
+
+        status_panel = QFrame()
+        status_panel.setObjectName("statusPanel")
+        status_layout = QVBoxLayout(status_panel)
+        status_layout.setContentsMargins(16, 10, 16, 10)
+        status_layout.setSpacing(4)
+        status_layout.addWidget(self.file_progress)
+        status_layout.addWidget(self.status)
+        status_layout.addWidget(self.asr_status)
 
         content = QWidget()
-        content.setLayout(layout)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(24, 18, 24, 18)
+        layout.setSpacing(16)
+        layout.addWidget(header)
+        layout.addWidget(splitter, 1)
+        layout.addWidget(status_panel)
         self.setCentralWidget(content)
 
         self.timer = QTimer(self)
@@ -161,6 +298,25 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.update_recording_state)
         self.timer.start()
         self.refresh_devices()
+
+    @staticmethod
+    def _section_title(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("sectionTitle")
+        return label
+
+    @staticmethod
+    def _field_label(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("fieldLabel")
+        return label
+
+    @staticmethod
+    def _hint(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("hint")
+        label.setWordWrap(True)
+        return label
 
     def refresh_devices(self) -> None:
         self.devices.clear()

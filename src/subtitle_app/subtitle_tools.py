@@ -7,7 +7,7 @@ from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QProgressBar,
-    QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSpinBox, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .background_job import BackgroundJob
@@ -15,6 +15,41 @@ from .billing import Pricing, UsageRecord, usage_report, window_summary
 from .subtitle_mux import mux_subtitles
 from .subtitles import parse_srt, render_srt, write_export
 from .translation import TranslationConfig, translate_subtitles
+
+
+TOOLS_STYLE = """
+QDialog, QScrollArea, QScrollArea > QWidget > QWidget {
+    background: #edf3f8; color: #21334d;
+}
+QWidget { font-family: 'Microsoft YaHei UI', 'Segoe UI'; font-size: 13px; color: #21334d; }
+QLabel#toolsTitle { font-size: 25px; font-weight: 700; color: #183457; }
+QLabel#toolsSection {
+    font-size: 16px; font-weight: 700; color: #203b5d;
+    padding-top: 9px;
+}
+QLabel#toolsHint { color: #70839b; font-size: 11px; }
+QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox, QPlainTextEdit {
+    background: #ffffff; border: 1px solid #cbd9e7;
+    border-radius: 7px; padding: 7px 9px;
+    selection-background-color: #3168c9;
+}
+QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus,
+QSpinBox:focus, QPlainTextEdit:focus { border: 2px solid #3168c9; }
+QPlainTextEdit { background: #f8fbfe; }
+QPushButton {
+    background: #ffffff; color: #24466d; border: 1px solid #ccdaea;
+    border-radius: 7px; padding: 8px 13px; min-height: 22px; font-weight: 600;
+}
+QPushButton:hover { background: #e6eff9; border-color: #8eb0d9; }
+QPushButton:focus { border: 2px solid #3168c9; }
+QPushButton:disabled { color: #9aaabe; background: #f4f7fa; border-color: #e3eaf1; }
+QToolButton#toolsAdvancedToggle {
+    border: none; background: transparent; color: #3168c9;
+    font-weight: 600; padding: 7px 0;
+}
+QProgressBar { background: #dce8f3; border: none; border-radius: 5px; min-height: 16px; }
+QProgressBar::chunk { background: #4b8ad6; border-radius: 5px; }
+"""
 
 
 class SubtitleToolsDialog(QDialog):
@@ -32,7 +67,8 @@ class SubtitleToolsDialog(QDialog):
         self.usage_records = []
         self.current_usage_record = None
         self.setWindowTitle("字幕翻译与封装")
-        self.resize(860, 820)
+        self.resize(900, 780)
+        self.setStyleSheet(TOOLS_STYLE)
         self.source_label = QLineEdit(str(self.source or ""))
         self.source_label.setReadOnly(True)
         self.source_label.setPlaceholderText("选择原视频")
@@ -47,7 +83,7 @@ class SubtitleToolsDialog(QDialog):
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
         self.preview.setPlaceholderText("可导入已保存的 SRT，或从识别/校对窗口带入字幕。")
-        self.preview.setMaximumHeight(180)
+        self.preview.setMaximumHeight(130)
         self.preset = QComboBox()
         self.preset.addItems(["自定义兼容接口", "千问云端（中国内地）", "Ollama 本地"])
         self.base_url = QLineEdit()
@@ -106,11 +142,12 @@ class SubtitleToolsDialog(QDialog):
         scroll.setWidget(content)
         outer.addWidget(scroll)
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setContentsMargins(30, 24, 30, 28)
         layout.setSpacing(12)
-        heading = QLabel("字幕翻译与封装")
-        heading.setStyleSheet("font-size: 22px; font-weight: 600;")
+        heading = QLabel("翻译与封装")
+        heading.setObjectName("toolsTitle")
         layout.addWidget(heading)
+        layout.addWidget(self._section_title("视频与字幕"))
         row = QHBoxLayout()
         row.addWidget(self.source_label, 1)
         row.addWidget(self.video_button)
@@ -121,30 +158,54 @@ class SubtitleToolsDialog(QDialog):
         row.addWidget(self.srt_button)
         layout.addLayout(row)
         layout.addWidget(self.preview, 1)
+        layout.addWidget(self._section_title("翻译字幕"))
         form = QFormLayout()
+        form.setSpacing(10)
         form.addRow("翻译服务", self.preset)
         form.addRow("接口地址", self.base_url)
         form.addRow("模型名称", self.model)
         form.addRow("API Key", self.api_key)
-        options = QHBoxLayout()
-        options.addWidget(self.target, 1)
-        options.addWidget(self.batch_size)
-        form.addRow("目标语言 / 每批条数", options)
+        form.addRow("目标语言", self.target)
         layout.addLayout(form)
-        layout.addWidget(self.pricing_enabled)
+        privacy = QLabel("只发送字幕文字，不上传视频或音频。API Key 关闭窗口后清除。")
+        privacy.setWordWrap(True)
+        privacy.setObjectName("toolsHint")
+        layout.addWidget(privacy)
+
+        self.advanced_toggle = QToolButton()
+        self.advanced_toggle.setText("更多翻译设置与费用估算")
+        self.advanced_toggle.setCheckable(True)
+        self.advanced_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self.advanced_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.advanced_toggle.setObjectName("toolsAdvancedToggle")
+        layout.addWidget(self.advanced_toggle)
+        advanced = QWidget()
+        advanced_layout = QVBoxLayout(advanced)
+        advanced_layout.setContentsMargins(0, 0, 0, 0)
+        advanced_layout.setSpacing(9)
+        batch_row = QHBoxLayout()
+        batch_row.addWidget(QLabel("每批翻译条数"))
+        batch_row.addWidget(self.batch_size)
+        batch_row.addStretch()
+        advanced_layout.addLayout(batch_row)
+        advanced_layout.addWidget(self.pricing_enabled)
         pricing = QHBoxLayout()
         pricing.addWidget(self.currency)
         pricing.addWidget(QLabel("输入 / 百万 token"))
         pricing.addWidget(self.input_price, 1)
         pricing.addWidget(QLabel("输出 / 百万 token"))
         pricing.addWidget(self.output_price, 1)
-        layout.addLayout(pricing)
+        advanced_layout.addLayout(pricing)
         price_note = QLabel("请按服务商单价填写；本地免费服务可填 0。估算未扣缓存折扣或赠送额度，以服务账单为准。")
         price_note.setWordWrap(True)
-        layout.addWidget(price_note)
-        privacy = QLabel("翻译只发送字幕文字，不上传视频或音频。API Key 仅保留在当前窗口，关闭后清除。")
-        privacy.setWordWrap(True)
-        layout.addWidget(privacy)
+        price_note.setObjectName("toolsHint")
+        advanced_layout.addWidget(price_note)
+        advanced.setVisible(False)
+        self.advanced_toggle.toggled.connect(advanced.setVisible)
+        self.advanced_toggle.toggled.connect(
+            lambda checked: self.advanced_toggle.setArrowType(
+                Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow))
+        layout.addWidget(advanced)
         translate_row = QHBoxLayout()
         translate_row.addWidget(self.translate_button)
         translate_row.addWidget(self.save_translation_button)
@@ -153,6 +214,7 @@ class SubtitleToolsDialog(QDialog):
         layout.addWidget(self.cost_label)
         layout.addWidget(self.window_usage_label)
         layout.addWidget(self.report_button)
+        layout.addWidget(self._section_title("放进视频"))
         note = QLabel("输出 MKV，直接复制全部视频和音轨，使用当前字幕；不带入旧字幕轨。原文件保留。")
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -160,14 +222,21 @@ class SubtitleToolsDialog(QDialog):
         actions.addWidget(self.mux_button)
         actions.addWidget(self.cancel_button)
         layout.addLayout(actions)
-        layout.addWidget(self.progress)
-        layout.addWidget(self.status)
+        outer.addWidget(self.progress)
+        self.status.setContentsMargins(30, 9, 30, 12)
+        outer.addWidget(self.status)
         self.timer = QTimer(self)
         self.timer.setInterval(100)
         self.timer.timeout.connect(self.poll_job)
         self.timer.start()
         self.refresh_preview()
         self.update_pricing_controls()
+
+    @staticmethod
+    def _section_title(text):
+        label = QLabel(text)
+        label.setObjectName("toolsSection")
+        return label
 
     @staticmethod
     def price_box():
