@@ -46,7 +46,7 @@ small 可离线识别。base、medium 未随包提供，仍从用户缓存读取
 .venv\Scripts\python packaging\build_windows.py
 ```
 
-也可双击 `build-windows.cmd`。默认输出 `dist/巴别塔` 和 `dist/巴别塔-0.1.0-win64.zip`。目标目录已存在时拒绝覆盖，请换一个输出位置：
+也可双击 `build-windows.cmd`。v0.2.0 默认输出 `dist/巴别塔` 和 `dist/巴别塔-0.2.0-win64.zip`。目标目录已存在时拒绝覆盖，请换一个输出位置：
 
 ```powershell
 .venv\Scripts\python packaging\build_windows.py --output dist-next

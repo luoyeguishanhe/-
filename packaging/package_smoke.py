@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--device", choices=("cpu", "cuda", "auto"), default="cpu")
     parser.add_argument("--live", action="store_true")
+    parser.add_argument("--startup-screenshot", type=Path)
     args = parser.parse_args(sys.argv[2:])
     report = {"frozen": bool(getattr(sys, "frozen", False)), "executable": sys.executable,
               "bundle_root": str(getattr(sys, "_MEIPASS", "")), "checks": {}}
@@ -47,6 +48,16 @@ def main():
         window = MainWindow()
         window.timer.stop()
         checks["main_window"] = window.windowTitle()
+        from subtitle_app.startup import StartupController
+        controller = StartupController(app, window_factory=lambda: window)
+        controller.start()
+        app.processEvents()
+        assert controller.window is window
+        assert controller.welcome.enter_button.isEnabled()
+        if args.startup_screenshot:
+            controller.welcome.grab().save(str(args.startup_screenshot))
+        controller.welcome.accept()
+        checks["startup"] = "welcome ready; manual entry; reusable about screen"
         checks["audio_devices"] = len(list_output_devices())
         checks["webrtcvad"] = not webrtcvad.Vad(2).is_speech(bytes(640), 16000)
         checks["resampler"] = int(soxr.resample(np.zeros(4800, dtype=np.float32), 48000, 16000).size)

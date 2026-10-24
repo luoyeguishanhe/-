@@ -2,13 +2,11 @@
 
 from datetime import datetime
 from pathlib import Path
-import sys
 from tempfile import TemporaryDirectory
 
 from PyQt6.QtCore import QSettings, QStandardPaths, QTimer, QUrl, Qt
 from PyQt6.QtGui import QCloseEvent, QIcon
 from PyQt6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -31,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .audio_capture import SystemAudioRecorder, list_output_devices
+from .branding import APP_NAME, TAGLINE, icon_path
 from .live_overlay import LiveSubtitleOverlay, LiveTranslationSettingsDialog
 from .live_subtitles import LiveSubtitleTranslator
 from .speech_pipeline import SpeechPipeline
@@ -60,10 +59,10 @@ QLabel#statusText { font-weight: 600; }
 QScrollArea { background: transparent; border: none; }
 QComboBox, QDoubleSpinBox, QLineEdit, QPlainTextEdit {
     background: #ffffff; border: 1px solid #cbd9e7; border-radius: 7px;
-    padding: 7px 9px; selection-background-color: #3168c9;
+    padding: 7px 9px; selection-background-color: #105761;
 }
 QComboBox:focus, QDoubleSpinBox:focus, QLineEdit:focus, QPlainTextEdit:focus {
-    border: 2px solid #3168c9;
+    border: 2px solid #105761;
 }
 QComboBox, QDoubleSpinBox { min-height: 22px; }
 QPlainTextEdit#transcript {
@@ -75,16 +74,16 @@ QPushButton {
     border-radius: 7px; padding: 8px 14px; min-height: 23px; font-weight: 600;
 }
 QPushButton:hover { background: #e6eff9; border-color: #8eb0d9; }
-QPushButton:focus { border: 2px solid #3168c9; }
+QPushButton:focus { border: 2px solid #105761; }
 QPushButton:disabled { color: #9aaabe; background: #f4f7fa; border-color: #e3eaf1; }
 QPushButton#primaryButton {
-    background: #3168c9; color: #ffffff; border-color: #3168c9;
+    background: #105761; color: #ffffff; border-color: #105761;
     padding-top: 12px; padding-bottom: 12px;
 }
-QPushButton#primaryButton:hover { background: #2457af; }
-QPushButton#primaryButton:disabled { background: #aabedb; border-color: #aabedb; color: #eef4fb; }
+QPushButton#primaryButton:hover { background: #0b4650; }
+QPushButton#primaryButton:disabled { background: #aac8c6; border-color: #aac8c6; color: #eef4fb; }
 QToolButton#advancedToggle {
-    border: none; background: transparent; color: #3168c9;
+    border: none; background: transparent; color: #105761;
     font-weight: 600; padding: 7px 0; text-align: left;
 }
 QToolButton#advancedToggle:hover { color: #1e4e9a; }
@@ -92,7 +91,7 @@ QProgressBar {
     background: #dce8f3; border: none; border-radius: 5px;
     min-height: 13px; text-align: center; color: #203b5d;
 }
-QProgressBar::chunk { background: #4b8ad6; border-radius: 5px; }
+QProgressBar::chunk { background: #3b8d90; border-radius: 5px; }
 QSplitter::handle { background: transparent; width: 8px; }
 """
 
@@ -100,9 +99,8 @@ QSplitter::handle { background: transparent; width: 8px; }
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("巴别塔")
-        icon_root = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2] / "packaging"
-        self.setWindowIcon(QIcon(str(icon_root / "app-icon.ico")))
+        self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(QIcon(str(icon_path())))
         self.resize(1100, 730)
         self.setMinimumSize(860, 590)
         self.recorder = SystemAudioRecorder()
@@ -134,9 +132,9 @@ class MainWindow(QMainWindow):
         self._translation_performance = ""
 
         self.setStyleSheet(MAIN_STYLE)
-        title = QLabel("巴别塔")
+        title = QLabel(APP_NAME)
         title.setObjectName("appTitle")
-        description = QLabel("跨越语言隔阂，让每一句都能被听懂")
+        description = QLabel(TAGLINE)
         description.setObjectName("appDescription")
 
         self.devices = QComboBox()
@@ -227,19 +225,30 @@ class MainWindow(QMainWindow):
         self.asr_status.setWordWrap(True)
         self.live_usage = QLabel("")
         self.live_usage.setWordWrap(True)
+        self.live_usage.hide()
         self.performance_status = QLabel("")
         self.performance_status.setWordWrap(True)
+        self.performance_status.hide()
         self.transcript = QPlainTextEdit()
         self.transcript.setReadOnly(True)
         self.transcript.setPlaceholderText("字幕会显示在这里。\n\n选择本地视频可直接生成字幕；录制电脑声音适合网页视频或直播。")
         self.transcript.setObjectName("transcript")
 
         header = QWidget()
-        header_layout = QVBoxLayout(header)
+        header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(2)
-        header_layout.addWidget(title)
-        header_layout.addWidget(description)
+        header_layout.setSpacing(14)
+        logo = QLabel()
+        logo.setPixmap(self.windowIcon().pixmap(52, 52))
+        header_layout.addWidget(logo)
+        brand_text = QVBoxLayout()
+        brand_text.setSpacing(2)
+        brand_text.addWidget(title)
+        brand_text.addWidget(description)
+        header_layout.addLayout(brand_text, 1)
+        self.about_button = QPushButton("关于巴别塔")
+        self.about_button.clicked.connect(self.open_about)
+        header_layout.addWidget(self.about_button)
 
         source_panel = QFrame()
         source_panel.setObjectName("sourcePanel")
@@ -361,6 +370,12 @@ class MainWindow(QMainWindow):
         label.setObjectName("sectionTitle")
         return label
 
+    def open_about(self) -> None:
+        from .welcome import WelcomeWindow
+        dialog = WelcomeWindow(self, about=True)
+        dialog.exec()
+        dialog.deleteLater()
+
     @staticmethod
     def _field_label(text: str) -> QLabel:
         label = QLabel(text)
@@ -440,7 +455,9 @@ class MainWindow(QMainWindow):
             self.live_overlay.hide()
         self._live_mode = False
         self.live_usage.clear()
+        self.live_usage.hide()
         self.performance_status.clear()
+        self.performance_status.hide()
         self._backend_text = ""
         self._asr_performance = ""
         self._translation_performance = ""
@@ -568,6 +585,7 @@ class MainWindow(QMainWindow):
             self._live_completion_tokens = 0
             self._live_unreported_calls = 0
             self.live_usage.setText("直播翻译用量：等待接口返回")
+            self.live_usage.show()
             if self.live_translator is not None:
                 self.live_translator.cancel()
             self.live_translator = LiveSubtitleTranslator(self.live_config)
@@ -785,6 +803,7 @@ class MainWindow(QMainWindow):
     def _update_performance_status(self) -> None:
         self.performance_status.setText(" | ".join(filter(None, (
             self._backend_text, self._asr_performance, self._translation_performance))))
+        self.performance_status.setVisible(bool(self.performance_status.text()))
 
     def _receive_text(self, value) -> None:
         segment, transcript, language = value
@@ -960,11 +979,5 @@ class MainWindow(QMainWindow):
 
 
 def main() -> int:
-    app = QApplication(sys.argv)
-    app.setApplicationName("巴别塔")
-    if getattr(sys, "frozen", False):
-        app.setWindowIcon(QIcon(str(Path(sys._MEIPASS) / "app-icon.ico")))
-    window = MainWindow()
-    app.setWindowIcon(window.windowIcon())
-    window.show()
-    return app.exec()
+    from .startup import main as startup_main
+    return startup_main()

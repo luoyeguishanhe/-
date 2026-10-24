@@ -55,11 +55,19 @@ def main():
     shutil.copyfile(ROOT / "packaging/THIRD_PARTY.md", release / "THIRD_PARTY.md")
     shutil.copytree(ROOT / "packaging/licenses", release / "licenses")
     shutil.copytree(ROOT / "docs", release / "docs")
+    shutil.copyfile(ROOT / "LICENSE", release / "LICENSE")
+    shutil.copyfile(ROOT / "NOTICE.md", release / "NOTICE.md")
+    shutil.copyfile(ROOT / "README.md", release / "README.md")
+    (release / "packaging").mkdir()
+    for name in ("app-icon.svg", "THIRD_PARTY.md"):
+        shutil.copyfile(ROOT / "packaging" / name, release / "packaging" / name)
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     metadata = {"name": "巴别塔", "version": version, "platform": "windows-x86_64", "bundled_model": "small" if not args.without_model else None,
-                "python": sys.version, "source": "https://github.com/luoyeguishanhe/-"}
+                "python": sys.version, "source": "https://github.com/luoyeguishanhe/-",
+                "license": "GPL-3.0-only",
+                "source_archive": f"https://github.com/luoyeguishanhe/-/archive/refs/tags/v{version}.zip"}
     (release / "release.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-    dependencies = sorted(f"{dist.metadata['Name']}=={dist.version}" for dist in distributions())
+    dependencies = sorted({f"{dist.metadata['Name']}=={dist.version}" for dist in distributions()})
     (release / "build-dependencies.txt").write_text("\n".join(dependencies) + "\n", encoding="utf-8")
     if not args.no_archive:
         archive = shutil.make_archive(str(output / f"巴别塔-{version}-win64"), "zip", output, "巴别塔")

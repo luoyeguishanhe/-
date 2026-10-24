@@ -13,7 +13,7 @@ if __name__ == "__main__":
         if len(sys.argv) > 1 and sys.argv[1] == "--self-test":
             from package_smoke import main
         else:
-            from subtitle_app.main import main
+            from subtitle_app.startup import main
         raise SystemExit(main())
     except Exception:
         traceback.print_exc()

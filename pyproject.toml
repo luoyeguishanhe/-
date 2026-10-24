@@ -4,9 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "subtitle-app"
-version = "0.1.0"
+version = "0.2.0"
 description = "巴别塔：跨越语言隔阂的实时字幕与翻译应用"
 readme = "README.md"
+license = {file = "LICENSE"}
+authors = [{name = "luoyeguishanhe"}]
 requires-python = ">=3.11"
 dependencies = [
     "PyQt6>=6.5",
@@ -21,7 +23,7 @@ dependencies = [
 ]
 
 [project.scripts]
-subtitle-app = "subtitle_app.main:main"
+subtitle-app = "subtitle_app.startup:main"
 
 [project.optional-dependencies]
 build = ["pyinstaller>=6.16,<7"]
