@@ -16,7 +16,7 @@
 
 ## 下载与开始使用
 
-从 [Releases](https://github.com/luoyeguishanhe/-/releases) 获取 Windows 64 位便携包。完整解压后双击 `巴别塔/巴别塔.exe`，保留同目录的 `_internal`、`models` 和说明文件；无需安装 Python。启动页会展示项目介绍，组件准备完成后点击“进入巴别塔”。主界面右上角可再次打开“关于巴别塔”。
+从 [Releases](https://github.com/luoyeguishanhe/babel-subtitle-translator/releases) 获取 Windows 64 位便携包。完整解压后双击 `巴别塔/巴别塔.exe`，保留同目录的 `_internal`、`models` 和说明文件；无需安装 Python。启动页会展示项目介绍，组件准备完成后点击“进入巴别塔”。主界面右上角可再次打开“关于巴别塔”。
 
 - **处理本地视频**：选原声语言 → “选择视频并生成字幕” → 等待完成。程序自动在视频旁保存 TXT、SRT，已有文件会另存编号版。需要中文译文时再打开“翻译与封装…”，配置翻译服务。
 - **看直播或网页视频**：选播放器实际使用的声音输出设备与原声语言 → “翻译服务设置…” → “开始直播翻译字幕”。字幕框可拖动、隐藏、重新显示；无需选择录音保存位置。
@@ -79,4 +79,4 @@ python -m venv .venv
 
 项目自身源代码采用 [GPLv3](LICENSE)；第三方库和模型保留各自许可。感谢 Whisper、faster-whisper、CTranslate2、PyQt6、PyAV、OpenCC 等开源项目。详见 [项目来源与声明](NOTICE.md)、[第三方组件](packaging/THIRD_PARTY.md)。
 
-欢迎通过 [Issues](https://github.com/luoyeguishanhe/-/issues) 反馈问题。请描述版本、操作步骤、实际结果及底部耗时信息，分享日志前检查其中是否包含个人信息或接口密钥。
+欢迎通过 [Issues](https://github.com/luoyeguishanhe/babel-subtitle-translator/issues) 反馈问题。请描述版本、操作步骤、实际结果及底部耗时信息，分享日志前检查其中是否包含个人信息或接口密钥。

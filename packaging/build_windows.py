@@ -63,9 +63,9 @@ def main():
         shutil.copyfile(ROOT / "packaging" / name, release / "packaging" / name)
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     metadata = {"name": "巴别塔", "version": version, "platform": "windows-x86_64", "bundled_model": "small" if not args.without_model else None,
-                "python": sys.version, "source": "https://github.com/luoyeguishanhe/-",
+                "python": sys.version, "source": "https://github.com/luoyeguishanhe/babel-subtitle-translator",
                 "license": "GPL-3.0-only",
-                "source_archive": f"https://github.com/luoyeguishanhe/-/archive/refs/tags/v{version}.zip"}
+                "source_archive": f"https://github.com/luoyeguishanhe/babel-subtitle-translator/archive/refs/tags/v{version}.zip"}
     (release / "release.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     dependencies = sorted({f"{dist.metadata['Name']}=={dist.version}" for dist in distributions()})
     (release / "build-dependencies.txt").write_text("\n".join(dependencies) + "\n", encoding="utf-8")

@@ -18,7 +18,7 @@ MODEL_NOTE = (
     "本地语音识别使用开源免费的 Whisper 模型，没有自研或训练专属模型。"
     "翻译需要另行接入本地大模型或云端接口，云端服务可能收费。"
 )
-PROJECT_URL = "https://github.com/luoyeguishanhe/-"
+PROJECT_URL = "https://github.com/luoyeguishanhe/babel-subtitle-translator"
 
 
 def icon_path() -> Path:

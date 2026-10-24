@@ -28,5 +28,5 @@ Primary upstream source and license references:
   https://docs.nvidia.com/cuda/eula/ and https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html
   (NVIDIA license terms; distribution-provided license files are retained in `_internal`.)
 
-Project source and build scripts: https://github.com/luoyeguishanhe/-
+Project source and build scripts: https://github.com/luoyeguishanhe/babel-subtitle-translator
 No personal audio/video, API keys, transcripts, or usage history are included.
