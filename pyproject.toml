@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "subtitle-app"
 version = "0.2.0"
-description = "巴别塔：跨越语言隔阂的实时字幕与翻译应用"
+description = "巴别塔 Babel：Windows 实时声音翻译与视频翻译工具，支持 Whisper 语音识别、自动中文字幕和 SRT 字幕导出"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [{name = "luoyeguishanhe"}]
