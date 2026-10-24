@@ -13,7 +13,7 @@ for package in ("faster_whisper", "ctranslate2", "onnxruntime", "opencc",
     hiddenimports += hidden
 for distribution in ("faster-whisper", "opencc-python-reimplemented", "imageio-ffmpeg", "PyQt6", "PyQt6-Qt6"):
     datas += copy_metadata(distribution)
-datas += [(str(root / "build" / "app-icon.ico"), ".")]
+datas += [(str(root / "packaging" / "app-icon.ico"), ".")]
 
 a = Analysis(
     [str(root / "packaging" / "launcher.py")],
@@ -25,8 +25,9 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 exe = EXE(
-    pyz, a.scripts, [], exclude_binaries=True, name="SubtitleApp",
+    pyz, a.scripts, [], exclude_binaries=True, name="巴别塔",
     debug=False, strip=False, upx=False, console=False,
-    icon=str(root / "build" / "app-icon.ico"),
+    icon=str(root / "packaging" / "app-icon.ico"),
+    version=str(root / "packaging" / "version_info.txt"),
 )
-coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="SubtitleApp")
+coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="巴别塔")

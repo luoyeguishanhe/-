@@ -21,5 +21,5 @@ if __name__ == "__main__":
             import ctypes
             ctypes.windll.user32.MessageBoxW(
                 0, f"程序未能启动。请保留完整解压目录，并查看日志：\n{log_path}",
-                "语音识别与字幕", 0x10)
+                "巴别塔", 0x10)
         raise SystemExit(1)

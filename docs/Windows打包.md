@@ -2,13 +2,13 @@
 
 ## 用户怎么启动
 
-完整解压便携 ZIP 后，双击 `SubtitleApp/SubtitleApp.exe`。不需要安装 Python，也不需要运行 PowerShell 命令。
+完整解压便携 ZIP 后，双击 `巴别塔/巴别塔.exe`。不需要安装 Python，也不需要运行 PowerShell 命令。
 
 目录结构如下：
 
 ```text
-SubtitleApp/
-  SubtitleApp.exe
+巴别塔/
+  巴别塔.exe
   _internal/          Python、Qt、语音库、FFmpeg 等运行资源
   models/small/       随包提供的 small 识别模型
   docs/               功能说明
@@ -19,7 +19,7 @@ SubtitleApp/
   release.json
 ```
 
-这些目录是一套完整程序，不能只把 EXE 单独复制走。本版是 Windows 64 位便携测试版；没有安装向导、自动更新或正式产品名。
+这些目录是一套完整程序，不能只把 EXE 单独复制走。本版是 Windows 64 位便携测试版，产品名为“巴别塔”；没有安装向导或自动更新。
 
 small 可离线识别。base、medium 未随包提供，仍从用户缓存读取，缺少时需要联网下载。外部云端翻译需要配置自己的服务和 Key；本地 Ollama 服务仍需单独准备。
 
@@ -46,7 +46,7 @@ small 可离线识别。base、medium 未随包提供，仍从用户缓存读取
 .venv\Scripts\python packaging\build_windows.py
 ```
 
-也可双击 `build-windows.cmd`。默认输出 `dist/SubtitleApp` 和 `dist/SubtitleApp-0.1.0-win64.zip`。目标目录已存在时拒绝覆盖，请换一个输出位置：
+也可双击 `build-windows.cmd`。默认输出 `dist/巴别塔` 和 `dist/巴别塔-0.1.0-win64.zip`。目标目录已存在时拒绝覆盖，请换一个输出位置：
 
 ```powershell
 .venv\Scripts\python packaging\build_windows.py --output dist-next
@@ -55,6 +55,8 @@ small 可离线识别。base、medium 未随包提供，仍从用户缓存读取
 默认需要本机已有 small 模型缓存。可通过 `--model-source` 指定包含四个模型文件的目录，或使用 `--without-model` 制作需要单独准备模型的精简版；当前交付的便携包包含 small。
 
 打包产物和个人媒体不会提交 Git。Git 保存的是代码、打包配置、图标、说明与自检程序，成品 ZIP 单独交付。
+
+图标使用 `packaging/app-icon.svg` 作为源文件，构建时自动生成包含 16、24、32、48、64、128、256 像素的 `packaging/app-icon.ico`。仅更新图标时也可运行 `.venv\Scripts\python packaging\generate_icon.py`。EXE 的产品名称、说明和原始文件名由 `packaging/version_info.txt` 提供。内部包名和用户数据目录继续沿用 `SubtitleApp`，兼容已有缓存与设置。
 
 ## 验证方式
 

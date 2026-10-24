@@ -100,7 +100,9 @@ QSplitter::handle { background: transparent; width: 8px; }
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("字幕工坊")
+        self.setWindowTitle("巴别塔")
+        icon_root = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2] / "packaging"
+        self.setWindowIcon(QIcon(str(icon_root / "app-icon.ico")))
         self.resize(1100, 730)
         self.setMinimumSize(860, 590)
         self.recorder = SystemAudioRecorder()
@@ -129,9 +131,9 @@ class MainWindow(QMainWindow):
         self._live_unreported_calls = 0
 
         self.setStyleSheet(MAIN_STYLE)
-        title = QLabel("字幕工坊")
+        title = QLabel("巴别塔")
         title.setObjectName("appTitle")
-        description = QLabel("把视频或电脑声音变成可编辑、可翻译的字幕")
+        description = QLabel("跨越语言隔阂，让每一句都能被听懂")
         description.setObjectName("appDescription")
 
         self.devices = QComboBox()
@@ -928,8 +930,10 @@ class MainWindow(QMainWindow):
 
 def main() -> int:
     app = QApplication(sys.argv)
+    app.setApplicationName("巴别塔")
     if getattr(sys, "frozen", False):
         app.setWindowIcon(QIcon(str(Path(sys._MEIPASS) / "app-icon.ico")))
     window = MainWindow()
+    app.setWindowIcon(window.windowIcon())
     window.show()
     return app.exec()

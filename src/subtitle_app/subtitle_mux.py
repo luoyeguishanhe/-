@@ -69,7 +69,7 @@ def mux_subtitles(source: Path, cues: list[SubtitleCue], destination: Path,
                    "-map_metadata", "0", "-map_chapters", "0", "-c:v", "copy",
                    "-c:a", "copy", "-c:s", "srt", "-disposition:s:0", "default",
                    "-metadata:s:s:0", f"language={language}",
-                   "-metadata:s:s:0", "title=SubtitleApp", "-avoid_negative_ts", "disabled",
+                   "-metadata:s:s:0", "title=巴别塔", "-avoid_negative_ts", "disabled",
                    str(output)]
         emit("status", "正在复制视频、音轨并封装字幕…")
         with subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,

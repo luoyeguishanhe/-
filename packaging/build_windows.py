@@ -24,7 +24,7 @@ def main():
     if sys.platform != "win32":
         parser.error("请在 Windows 64 位 Python 环境中构建")
     output = args.output.resolve()
-    release = output / "SubtitleApp"
+    release = output / "巴别塔"
     if release.exists():
         parser.error(f"输出目录已存在，请选择新的 --output 路径：{release}")
     model = args.model_source
@@ -36,16 +36,8 @@ def main():
         if not all((model / name).is_file() for name in ("model.bin", "config.json", "tokenizer.json", "vocabulary.txt")):
             parser.error("small 模型目录不完整，需要 model.bin、config.json、tokenizer.json 和 vocabulary.txt")
     (ROOT / "build").mkdir(exist_ok=True)
-    from PyQt6.QtCore import QRectF
-    from PyQt6.QtGui import QImage, QPainter
-    from PyQt6.QtSvg import QSvgRenderer
-    image = QImage(256, 256, QImage.Format.Format_ARGB32)
-    image.fill(0)
-    painter = QPainter(image)
-    QSvgRenderer(str(ROOT / "packaging/app-icon.svg")).render(painter, QRectF(0, 0, 256, 256))
-    painter.end()
-    if not image.save(str(ROOT / "build/app-icon.ico")):
-        raise RuntimeError("无法生成 EXE 图标")
+    from generate_icon import generate_icon
+    generate_icon(ROOT / "packaging/app-icon.svg", ROOT / "packaging/app-icon.ico")
     # Developer tools can prepend unrelated DLLs (for example Poppler's ICU) to
     # PATH. Do not let the dependency collector package those instead of the
     # Windows/Qt dependencies used by this application.
@@ -64,15 +56,15 @@ def main():
     shutil.copytree(ROOT / "packaging/licenses", release / "licenses")
     shutil.copytree(ROOT / "docs", release / "docs")
     version = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
-    metadata = {"version": version, "platform": "windows-x86_64", "bundled_model": "small" if not args.without_model else None,
+    metadata = {"name": "巴别塔", "version": version, "platform": "windows-x86_64", "bundled_model": "small" if not args.without_model else None,
                 "python": sys.version, "source": "https://github.com/luoyeguishanhe/-"}
     (release / "release.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     dependencies = sorted(f"{dist.metadata['Name']}=={dist.version}" for dist in distributions())
     (release / "build-dependencies.txt").write_text("\n".join(dependencies) + "\n", encoding="utf-8")
     if not args.no_archive:
-        archive = shutil.make_archive(str(output / f"SubtitleApp-{version}-win64"), "zip", output, "SubtitleApp")
+        archive = shutil.make_archive(str(output / f"巴别塔-{version}-win64"), "zip", output, "巴别塔")
         print(archive)
-    print(f"构建完成：{release / 'SubtitleApp.exe'}")
+    print(f"构建完成：{release / '巴别塔.exe'}")
 
 
 if __name__ == "__main__":

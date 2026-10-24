@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "subtitle-app"
 version = "0.1.0"
-description = "实时中文字幕桌面应用（开发中）"
+description = "巴别塔：跨越语言隔阂的实时字幕与翻译应用"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
