@@ -56,6 +56,8 @@ small 可离线识别。base、medium 未随包提供，仍从用户缓存读取
 
 打包产物和个人媒体不会提交 Git。Git 保存的是代码、打包配置、图标、说明与自检程序，成品 ZIP 单独交付。
 
+制作 GPU 版时先安装 `.venv\Scripts\python -m pip install -e ".[build,gpu]"`，构建脚本会将已安装的 cuBLAS、cuDNN、NVRTC DLL 和对应许可信息一并收集。GPU 包体积更大；没有这些可选依赖的构建仍可在 CPU 上运行。系统声音模式自动选择 GPU 并在不可用时回退 CPU，文件识别参数保持原配置。
+
 图标使用 `packaging/app-icon.svg` 作为源文件，构建时自动生成包含 16、24、32、48、64、128、256 像素的 `packaging/app-icon.ico`。仅更新图标时也可运行 `.venv\Scripts\python packaging\generate_icon.py`。EXE 的产品名称、说明和原始文件名由 `packaging/version_info.txt` 提供。内部包名和用户数据目录继续沿用 `SubtitleApp`，兼容已有缓存与设置。
 
 ## 验证方式

@@ -75,6 +75,9 @@ class LiveSubtitleTests(TestCase):
                 ("translated", (1, "hello", "你好")), None]
             window._poll_live_translation()
             self.assertEqual(window.live_overlay.translated.text(), "你好")
+            window.live_overlay.show_pending("next sentence")
+            self.assertEqual(window.live_overlay.translated.text(), "你好")
+            self.assertEqual(window.live_overlay.original.text(), "hello")
             window.live_overlay.hide()
             window.show_live_overlay()
             self.assertTrue(window.live_overlay.isVisible())

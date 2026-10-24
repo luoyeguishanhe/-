@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from queue import Empty, Full, Queue
 from threading import Event, Thread
+from time import monotonic
 
 import numpy as np
 import webrtcvad
@@ -25,6 +26,7 @@ class SpeechSegment:
     start_sample: int
     end_sample: int
     audio: np.ndarray
+    queued_at: float = field(default_factory=monotonic, compare=False)
 
     @property
     def start_seconds(self) -> float:
@@ -146,8 +148,10 @@ class SpeechPipeline:
         self.language = language
         self.low_latency = low_latency
         self.events: Queue[tuple[str, object]] = Queue()
-        self._audio: Queue[AudioChunk] = Queue(maxsize=256)
-        self._segments: Queue[SpeechSegment | None] = Queue(maxsize=12)
+        self._audio: Queue[AudioChunk] = Queue(maxsize=64 if low_latency else 256)
+        self._segments: Queue[SpeechSegment | None] = Queue(maxsize=1 if low_latency else 12)
+        self._latest_sample = 0
+        self._dropped_segments = 0
         self._cancel = Event()
         self._audio_done = Event()
         self._ready = Event()
@@ -170,10 +174,24 @@ class SpeechPipeline:
     def submit(self, samples: np.ndarray, start_sample: int) -> None:
         if not self._capture_started or self._cancel.is_set():
             return
+        self._latest_sample = start_sample + samples.size
+        chunk = AudioChunk(start_sample, samples.copy())
         try:
-            self._audio.put_nowait(AudioChunk(start_sample, samples.copy()))
+            self._audio.put_nowait(chunk)
             self._overrun_reported = False
         except Full:
+            if self.low_latency:
+                # Keep current sound rather than replaying a backlog of old PCM.
+                while True:
+                    try:
+                        self._audio.get_nowait()
+                    except Empty:
+                        pass
+                    try:
+                        self._audio.put_nowait(chunk)
+                        break
+                    except Full:
+                        continue
             if not self._overrun_reported:
                 self.events.put(("warning", "VAD 处理跟不上录音，部分音频已跳过"))
                 self._overrun_reported = True
@@ -192,7 +210,7 @@ class SpeechPipeline:
             return None
 
     def _detect_speech(self) -> None:
-        segmenter = (SpeechSegmenter(silence_frames=30, max_segment_frames=250)
+        segmenter = (SpeechSegmenter(silence_frames=25, max_segment_frames=200)
                      if self.low_latency else SpeechSegmenter())
         was_speaking = False
         try:
@@ -225,6 +243,20 @@ class SpeechPipeline:
             self.cancel()
 
     def _enqueue_segment(self, segment: SpeechSegment) -> None:
+        if self.low_latency:
+            while True:
+                try:
+                    self._segments.put_nowait(segment)
+                    break
+                except Full:
+                    try:
+                        self._segments.get_nowait()
+                        self._dropped_segments += 1
+                        self.events.put(("warning", "识别跟不上播放，已跳过旧的等待片段，优先识别最新声音"))
+                    except Empty:
+                        continue
+            self.events.put(("segment", (segment.start_seconds, segment.end_seconds)))
+            return
         try:
             self._segments.put_nowait(segment)
             self.events.put(("segment", (segment.start_seconds, segment.end_seconds)))
@@ -233,7 +265,7 @@ class SpeechPipeline:
 
     def _recognize(self) -> None:
         try:
-            recognizer = WhisperRecognizer(self.model_size)
+            recognizer = WhisperRecognizer(self.model_size, device="auto", live=self.low_latency)
         except Exception as exc:
             if not self._cancel.is_set():
                 self.events.put(("fatal", f"ASR 模型加载失败：{exc}"))
@@ -241,6 +273,7 @@ class SpeechPipeline:
         if self._cancel.is_set():
             return
         self._ready.set()
+        self.events.put(("backend", recognizer.backend))
         self.events.put(("ready", self.model_size))
         while not self._cancel.is_set():
             try:
@@ -251,7 +284,19 @@ class SpeechPipeline:
                 self.events.put(("complete", None))
                 return
             try:
+                started = monotonic()
+                queue_seconds = max(0, started - segment.queued_at)
+                previous_backend = recognizer.backend
                 result = recognizer.recognize(segment.audio, self.language)
+                if recognizer.backend != previous_backend:
+                    self.events.put(("backend", recognizer.backend))
+                self.events.put(("performance", {
+                    "asr_seconds": monotonic() - started,
+                    "queue_seconds": queue_seconds,
+                    "audio_seconds": len(segment.audio) / TARGET_SAMPLE_RATE,
+                    "lag_seconds": max(0, (self._latest_sample - segment.end_sample) / TARGET_SAMPLE_RATE),
+                    "dropped_segments": self._dropped_segments,
+                }))
                 if result["text"]:
                     self.events.put(("text", (segment, result["text"], result["language"])))
                     self.events.put(("subtitles", cues_from_parts(

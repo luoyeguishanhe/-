@@ -129,6 +129,9 @@ class MainWindow(QMainWindow):
         self._live_prompt_tokens = 0
         self._live_completion_tokens = 0
         self._live_unreported_calls = 0
+        self._backend_text = ""
+        self._asr_performance = ""
+        self._translation_performance = ""
 
         self.setStyleSheet(MAIN_STYLE)
         title = QLabel("巴别塔")
@@ -224,6 +227,8 @@ class MainWindow(QMainWindow):
         self.asr_status.setWordWrap(True)
         self.live_usage = QLabel("")
         self.live_usage.setWordWrap(True)
+        self.performance_status = QLabel("")
+        self.performance_status.setWordWrap(True)
         self.transcript = QPlainTextEdit()
         self.transcript.setReadOnly(True)
         self.transcript.setPlaceholderText("字幕会显示在这里。\n\n选择本地视频可直接生成字幕；录制电脑声音适合网页视频或直播。")
@@ -333,6 +338,7 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self.status)
         status_layout.addWidget(self.asr_status)
         status_layout.addWidget(self.live_usage)
+        status_layout.addWidget(self.performance_status)
 
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -434,6 +440,10 @@ class MainWindow(QMainWindow):
             self.live_overlay.hide()
         self._live_mode = False
         self.live_usage.clear()
+        self.performance_status.clear()
+        self._backend_text = ""
+        self._asr_performance = ""
+        self._translation_performance = ""
         self.tools_button.setEnabled(False)
         self.edit_button.setEnabled(False)
         if self._editor is not None:
@@ -564,8 +574,7 @@ class MainWindow(QMainWindow):
             self.live_translator.start()
             if self.live_overlay is None:
                 self.live_overlay = LiveSubtitleOverlay()
-            self.live_overlay.original.setText("")
-            self.live_overlay.translated.setText("等待语音…")
+            self.live_overlay.reset()
             self.live_overlay.show_overlay()
             self.show_overlay_button.setEnabled(True)
         self.devices.setEnabled(False)
@@ -681,7 +690,20 @@ class MainWindow(QMainWindow):
         if pipeline is not None:
             while (event := pipeline.next_event()) is not None:
                 kind, value = event
-                if kind == "ready" and self.output_path is not None:
+                if kind == "backend":
+                    fallback = value.get("fallback_reason", "")
+                    self._backend_text = ("GPU / " if value["device"] == "cuda" else "CPU / ") + value["compute_type"]
+                    if fallback:
+                        self._backend_text += "（GPU 不可用，已回退）"
+                    self.performance_status.setToolTip(fallback)
+                    self._update_performance_status()
+                elif kind == "performance":
+                    self._asr_performance = (
+                        f"识别 {value['asr_seconds']:.2f}s / 音频 {value['audio_seconds']:.1f}s，"
+                        f"排队 {value['queue_seconds']:.1f}s，落后 {value['lag_seconds']:.1f}s，"
+                        f"跳过 {value['dropped_segments']} 段")
+                    self._update_performance_status()
+                elif kind == "ready" and self.output_path is not None:
                     try:
                         pipeline.begin_capture()
                         self.recorder.start(
@@ -748,12 +770,21 @@ class MainWindow(QMainWindow):
                     f"直播翻译用量：输入 {self._live_prompt_tokens} token，"
                     f"输出 {self._live_completion_tokens} token"
                     + (f"；{self._live_unreported_calls} 次调用未返回用量" if self._live_unreported_calls else ""))
+            elif kind == "performance":
+                self._translation_performance = (
+                    f"翻译 {value['translation_seconds']:.2f}s，排队 {value['queue_seconds']:.1f}s，"
+                    f"跳过 {value['dropped_translations']} 条")
+                self._update_performance_status()
             elif kind == "error":
                 self.asr_status.setText(f"直播翻译失败：{value}")
                 if self.live_overlay is not None:
                     self.live_overlay.show_error(f"翻译失败：{value}")
             elif kind == "complete":
                 self.live_translator = None
+
+    def _update_performance_status(self) -> None:
+        self.performance_status.setText(" | ".join(filter(None, (
+            self._backend_text, self._asr_performance, self._translation_performance))))
 
     def _receive_text(self, value) -> None:
         segment, transcript, language = value

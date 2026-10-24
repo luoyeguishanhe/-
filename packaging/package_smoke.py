@@ -16,6 +16,8 @@ def main():
     parser.add_argument("--audio", type=Path)
     parser.add_argument("--video", type=Path)
     parser.add_argument("--screenshot", type=Path)
+    parser.add_argument("--device", choices=("cpu", "cuda", "auto"), default="cpu")
+    parser.add_argument("--live", action="store_true")
     args = parser.parse_args(sys.argv[2:])
     report = {"frozen": bool(getattr(sys, "frozen", False)), "executable": sys.executable,
               "bundle_root": str(getattr(sys, "_MEIPASS", "")), "checks": {}}
@@ -71,12 +73,14 @@ def main():
                         break
                 chunks += [frame.to_ndarray().reshape(-1) for frame in resampler.resample(None)]
             samples = np.concatenate(chunks)[:8 * 16000].astype(np.float32)
-        recognizer = WhisperRecognizer("small", local_files_only=True)
+        recognizer = WhisperRecognizer("small", local_files_only=True,
+                                       device=args.device, live=args.live)
         recognized = recognizer.recognize(samples, "zh")
         if args.audio:
             assert recognized["text"], "Expected speech in the supplied audio fixture"
         checks["asr"] = {"model_source": model_source("small"), "characters": len(recognized["text"]),
-                         "parts": len(recognized["parts"]), "samples": samples.size}
+                         "parts": len(recognized["parts"]), "samples": samples.size,
+                         **recognizer.backend}
         assert recognizer.converter.convert("漢語") == "汉语"
         checks["simplified_chinese"] = True
 

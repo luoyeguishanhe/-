@@ -111,6 +111,8 @@ class LiveSubtitleOverlay(QWidget):
         top = QHBoxLayout()
         title = QLabel("直播字幕  ·  拖动窗口调整位置")
         title.setObjectName("captionTitle")
+        self.caption_title = title
+        self._has_translation = False
         top.addWidget(title)
         top.addStretch()
         hide_button = QPushButton("隐藏")
@@ -142,14 +144,25 @@ class LiveSubtitleOverlay(QWidget):
         self.raise_()
 
     def show_pending(self, original: str) -> None:
-        self.original.setText(original)
-        self.translated.setText("正在翻译…")
+        self.caption_title.setText("正在翻译下一段 · 按住文字区域拖动")
+        if not self._has_translation:
+            self.original.setText(original)
+            self.translated.setText("正在翻译…")
+
+    def reset(self) -> None:
+        self._has_translation = False
+        self.caption_title.setText("直播字幕 · 按住文字区域拖动")
+        self.original.clear()
+        self.translated.setText("等待语音…")
 
     def show_translation(self, original: str, translated: str) -> None:
+        self._has_translation = True
+        self.caption_title.setText("直播字幕 · 按住文字区域拖动")
         self.original.setText(original)
         self.translated.setText(translated)
 
     def show_error(self, message: str) -> None:
+        self._has_translation = False
         self.translated.setText(message)
 
     def eventFilter(self, watched, event) -> bool:

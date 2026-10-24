@@ -3,6 +3,7 @@
 from dataclasses import replace
 from queue import Empty, Full, Queue
 from threading import Event, Thread
+from time import monotonic
 
 from .background_job import Cancelled
 from .subtitles import SubtitleCue
@@ -15,7 +16,8 @@ class LiveSubtitleTranslator:
         self.config = replace(config, batch_size=1, timeout=min(config.timeout, 30))
         self.transport = transport
         self.events: Queue[tuple[str, object]] = Queue()
-        self._pending: Queue[tuple[int, SubtitleCue]] = Queue(maxsize=2)
+        self._pending: Queue[tuple[int, SubtitleCue, float]] = Queue(maxsize=1)
+        self._dropped = 0
         self._cancel = Event()
         self._accepting = True
         self._failed = False
@@ -29,7 +31,7 @@ class LiveSubtitleTranslator:
         if not self._accepting or self._cancel.is_set() or self._failed:
             return False
         self._sequence += 1
-        item = (self._sequence, cue)
+        item = (self._sequence, cue, monotonic())
         skipped = False
         while True:
             try:
@@ -38,6 +40,7 @@ class LiveSubtitleTranslator:
             except Full:
                 try:
                     self._pending.get_nowait()
+                    self._dropped += 1
                     skipped = True
                 except Empty:
                     continue
@@ -67,12 +70,13 @@ class LiveSubtitleTranslator:
         try:
             while not self._cancel.is_set():
                 try:
-                    number, cue = self._pending.get(timeout=0.1)
+                    number, cue, queued_at = self._pending.get(timeout=0.1)
                 except Empty:
                     if not self._accepting:
                         break
                     continue
                 try:
+                    started = monotonic()
                     def emit(kind, value):
                         if kind == "token_usage":
                             self.events.put(("token_usage", value))
@@ -86,5 +90,10 @@ class LiveSubtitleTranslator:
                     self.events.put(("error", str(exc)))
                     break
                 self.events.put(("translated", (number, cue.text, result[0].text)))
+                self.events.put(("performance", {
+                    "translation_seconds": monotonic() - started,
+                    "queue_seconds": started - queued_at,
+                    "dropped_translations": self._dropped,
+                }))
         finally:
             self.events.put(("complete", None))

@@ -24,6 +24,9 @@ Primary upstream source and license references:
 - python-soxr / libsoxr: https://github.com/dofuuz/python-soxr (wrapper/library licenses)
 - webrtcvad-wheels: https://github.com/daanzu/py-webrtcvad-wheels (MIT and WebRTC notices)
 - NumPy: https://github.com/numpy/numpy (BSD and bundled library notices)
+- GPU builds include NVIDIA cuBLAS, cuDNN and NVRTC CUDA 12 runtime libraries:
+  https://docs.nvidia.com/cuda/eula/ and https://docs.nvidia.com/deeplearning/cudnn/backend/latest/reference/eula.html
+  (NVIDIA license terms; distribution-provided license files are retained in `_internal`.)
 
 Project source and build scripts: https://github.com/luoyeguishanhe/-
 No personal audio/video, API keys, transcripts, or usage history are included.

@@ -25,6 +25,10 @@ subtitle-app = "subtitle_app.main:main"
 
 [project.optional-dependencies]
 build = ["pyinstaller>=6.16,<7"]
+gpu = [
+    "nvidia-cublas-cu12>=12.8,<13; sys_platform == 'win32'",
+    "nvidia-cudnn-cu12>=9.7,<10; sys_platform == 'win32'",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
